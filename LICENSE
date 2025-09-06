@@ -1,0 +1,127 @@
+# TrueState Protocol (TSP) - Dual License
+
+**Creator:** Vladislav Dunaev
+**© 2025 Vladislav Dunaev. All rights reserved.**
+
+TSP is available under two license options. Choose the one that best fits your use case.
+
+## Open Source License (AGPL-3.0)
+
+### You may use TSP under AGPL-3.0 if:
+
+- Your project is **non-commercial**
+- You're willing to **open source your entire application** that uses TSP
+- You comply with **copyleft requirements** (derivative works must be AGPL-3.0)
+- You're okay with providing source code to users, even for web services
+
+### Under AGPL-3.0 you must:
+
+- **Preserve copyright notice**: Keep "© 2025 Vladislav Dunaev" in all source files
+- **Provide source code**: Make complete source available to all users
+- **License derivatives**: All modifications and derivative works under AGPL-3.0
+- **Network usage**: If you run TSP as web service, provide source to users
+
+### AGPL-3.0 full text:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+---
+
+## Commercial License
+
+### You need a Commercial License if:
+
+- You want to use TSP in **proprietary/closed-source** software
+- You're building a **commercial product or service**
+- You don't want to **open source your application**
+- You need to **distribute without AGPL obligations**
+
+### Commercial License includes:
+
+- **No copyleft requirements** - keep your code private
+- **Proprietary use permitted** - integrate into closed-source products
+- **Commercial distribution** - sell products containing TSP
+- **Technical support** - email support and bug fixes
+- **Royalty-free** - one-time fee, no ongoing royalties
+
+### Commercial License Pricing:
+
+| Company Size | Annual Revenue | License Fee | Support |
+|--------------|----------------|-------------|---------|
+| **Startup** | Under $1M | $2,000/year | Email support |
+| **Growth** | $1M - $10M | $5,000/year | Email + Phone support |
+| **Enterprise** | Over $10M | $15,000/year | Dedicated support |
+
+*Prices in USD. Volume discounts available for multi-year agreements.*
+
+### Get Commercial License:
+
+**Email:** dunaevlad@gmail.com
+**Subject:** TSP Commercial License Request
+
+Include:
+- Company name and size
+- Intended use case
+- Technical requirements
+
+---
+
+## License Selection Guide
+
+### Choose AGPL-3.0 if:
+✅ Open source/academic project
+✅ Non-commercial use
+✅ Comfortable with copyleft
+✅ Want to contribute back to community
+
+### Choose Commercial License if:
+✅ Commercial/proprietary software
+✅ SaaS or enterprise application
+✅ Need to keep source code private
+✅ Want professional support
+
+---
+
+## Patent Protection
+
+Commercial License includes **patent protection** for TSP technology. Any entity that initiates patent litigation against TSP or its users automatically forfeits all license rights.
+
+## Intellectual Property
+
+- **Copyright:** © 2025 Vladislav Dunaev
+- **Trademark:** "TrueState Protocol" and "TSP"
+- **Creator Rights:** All core algorithms and innovations remain with Vladislav Dunaev
+
+## Enforcement
+
+- **License violations** subject to copyright law remedies
+- **Commercial use without license** constitutes copyright infringement
+- **Governing law:** International copyright law
+
+---
+
+## Frequently Asked Questions
+
+**Q: Can I evaluate TSP before purchasing Commercial License?**
+A: Yes, use AGPL-3.0 version for evaluation. Convert to Commercial License when ready for production.
+
+**Q: Do I need Commercial License for internal company tools?**
+A: If the tool is used commercially (even internally), yes. AGPL-3.0 only covers non-commercial use.
+
+**Q: What about government/educational use?**
+A: Government and educational institutions can use AGPL-3.0 for non-commercial purposes. Commercial activities require Commercial License.
+
+**Q: Can I contribute improvements back to TSP?**
+A: Yes! Contributions under AGPL-3.0 are welcome. Contact for Contributor License Agreement details.
+
+**Q: What happens if I need custom terms?**
+A: Contact for custom licensing arrangements. Enterprise agreements available for specific requirements.
+
+---
+
+## Contact
+
+**Creator:** Vladislav Dunaev
+**Email:** dunaevlad@gmail.com
+**Technical Support:** dunaevlad@gmail.com
+
+*Simple. Clear. Enforceable.*
