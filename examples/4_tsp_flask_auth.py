@@ -1,17 +1,26 @@
 """
-TSP Example - Software Licensing Demo
+TSP Example - Stateless Web Authentication Server
 Copyright (c) 2025 Vladislav Dunaev
 Licensed under AGPL-3.0-or-Commercial
 """
 
 """
-Modern TSP Authentication Server
+TSP Stateless Authentication Server
+===================================
+
+Pure stateless authentication using embedded TSP artifacts:
+- No server-side session storage
+- No commits.json database
+- Self-contained tokens with embedded verification data
+- Instant token verification without external dependencies
+- Perfect for microservices and scalable web applications
 """
 
 import sys
 import json
 import base64
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
@@ -32,42 +41,51 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-class TSPAuthServer:
-    """TSP Authentication Server - stateless session management."""
+class TSPStatelessAuthServer:
+    """TSP Stateless Authentication Server - zero server-side storage."""
 
     def __init__(self, server_keys_dir: str = "server_keys"):
         self.server_keys_dir = Path(server_keys_dir)
-        self.server_password = b"TSP-Auth-Server-2025-SecurePassword!"
+        self.server_password = b"TSP-Stateless-Auth-Server-2025!"
         self._ensure_server_keys()
 
+        # Demo user database (in production, use external auth provider)
         self.users_db = {
             "alice": {
                 "password": "alice123",
                 "user_id": 1001,
                 "role": "admin",
                 "avatar": "👩‍💼",
+                "full_name": "Alice Johnson",
+                "department": "Engineering",
             },
             "bob": {
                 "password": "bob456",
                 "user_id": 1002,
                 "role": "user",
                 "avatar": "👨‍💻",
+                "full_name": "Bob Smith",
+                "department": "Product",
             },
             "charlie": {
                 "password": "charlie789",
                 "user_id": 1003,
                 "role": "user",
                 "avatar": "👨‍🔬",
+                "full_name": "Charlie Wilson",
+                "department": "Research",
             },
             "demo": {
                 "password": "demo",
                 "user_id": 1004,
                 "role": "guest",
                 "avatar": "🎭",
+                "full_name": "Demo User",
+                "department": "Testing",
             },
         }
 
-        logger.info("TSP Auth Server initialized")
+        logger.info("TSP Stateless Auth Server initialized - zero storage mode")
 
     def _ensure_server_keys(self):
         """Create server keys if they don't exist."""
@@ -86,30 +104,38 @@ class TSPAuthServer:
             logger.info("Server keys generated successfully")
 
     def authenticate_user(self, username: str, password: str) -> Optional[Dict]:
-        """Authenticate user credentials."""
+        """Authenticate user credentials against user database."""
         user = self.users_db.get(username)
         if user and user["password"] == password:
             return user
         return None
 
-    def create_session_token(
+    def create_stateless_token(
         self, user_id: int, username: str, duration_hours: int = 24
     ) -> Dict:
-        """Create TSP artifact as session token."""
+        """Create stateless TSP token with embedded artifact data."""
         try:
-            logger.info(f"Creating session token for user {username} (ID: {user_id})")
+            logger.info(f"Creating stateless token for {username} (ID: {user_id})")
 
+            # Create TSP instance for stateless mode
             tsp = TSP(
                 private_key_path=str(self.server_keys_dir / "private.pem"),
                 public_key_path=str(self.server_keys_dir / "public.pem"),
                 key_password=self.server_password,
-                model="WEB_AUTH",
+                model="WEB_AUTH",  # Fast generation for web tokens
                 mode="create",
             )
 
-            logger.info("Mining TSP artifact...")
-            artifact = tsp.create_artifact()
+            logger.info("Mining stateless TSP artifact...")
+            start_time = time.time()
 
+            # Create artifact in stateless mode (persist=False)
+            artifact_result = tsp.create_artifact(persist=False)
+            mining_time = time.time() - start_time
+
+            logger.info(f"Artifact generated in {mining_time:.2f}s (stateless mode)")
+
+            # Create session metadata
             now = datetime.utcnow()
             session_metadata = {
                 "user_id": user_id,
@@ -117,57 +143,69 @@ class TSPAuthServer:
                 "created_at": now.isoformat(),
                 "expires_at": (now + timedelta(hours=duration_hours)).isoformat(),
                 "server_public_key": tsp.signature.get_public_bytes().hex(),
-                "artifact_info": {
-                    "artifact_id": artifact["artifact_id"],
-                    "config_hash": artifact["config_hash"],
-                    "combined_hash": artifact["combined_hash"],
-                    "rarity": artifact["rarity"],
-                    "is_personalized": artifact["is_personalized"],
+                "mining_time": round(mining_time, 3),
+                "token_type": "stateless",
+                "artifact_summary": {
+                    "config_hash": artifact_result["config_hash"],
+                    "rarity": artifact_result["rarity"],
+                    "creation_timestamp": artifact_result["creation_timestamp"],
+                    "mode": artifact_result["mode"],
                 },
             }
 
+            # Sign session metadata
             metadata_bytes = json.dumps(session_metadata, sort_keys=True).encode()
             metadata_signature = tsp.signature.sign(metadata_bytes).hex()
 
-            token_data = {
+            # Create complete stateless token
+            stateless_token = {
                 "session": session_metadata,
                 "signature": metadata_signature,
-                "protocol_version": "TSP-1.0.0",
+                "tsp_artifact": artifact_result["artifact_data"],  # Embedded TSP data
+                "protocol_version": "TSP-Stateless-1.0",
             }
 
-            token_json = json.dumps(token_data, separators=(",", ":"))
+            # Base64 encode for HTTP transport
+            token_json = json.dumps(stateless_token, separators=(",", ":"))
             token_b64 = base64.b64encode(token_json.encode()).decode()
 
-            logger.info(f"Session token created successfully for {username}")
+            logger.info(f"Stateless token created: {len(token_json)} bytes")
 
             return {
                 "success": True,
                 "token": token_b64,
                 "metadata": session_metadata,
-                "artifact": artifact,
+                "artifact_summary": artifact_result,
+                "token_size": len(token_json),
+                "mining_time": mining_time,
             }
 
         except Exception as e:
-            logger.error(f"Failed to create session token: {e}")
+            logger.error(f"Failed to create stateless token: {e}")
             return {"success": False, "error": str(e)}
 
-    def verify_session_token(self, token_b64: str) -> Dict:
-        """Verify TSP session token."""
+    def verify_stateless_token(self, token_b64: str) -> Dict:
+        """Verify stateless TSP token using embedded artifact data."""
         try:
+            # Decode token
             token_json = base64.b64decode(token_b64).decode()
             token_data = json.loads(token_json)
 
             session = token_data.get("session", {})
             signature = token_data.get("signature")
+            tsp_artifact = token_data.get("tsp_artifact")
             protocol_version = token_data.get("protocol_version")
 
-            if protocol_version != "TSP-1.0.0":
+            # Validate protocol version
+            if protocol_version != "TSP-Stateless-1.0":
                 return {"valid": False, "error": "Unsupported protocol version"}
 
+            # Check expiration
             expires_at = datetime.fromisoformat(session.get("expires_at", ""))
             if datetime.utcnow() > expires_at:
                 return {"valid": False, "error": "Token expired"}
 
+            # Verify metadata signature
             server_pubkey = bytes.fromhex(session.get("server_public_key", ""))
             server_signature = SignatureHandler.create_verify_only(server_pubkey)
 
@@ -175,7 +213,8 @@ class TSPAuthServer:
             if not server_signature.verify(metadata_bytes, bytes.fromhex(signature)):
                 return {"valid": False, "error": "Invalid metadata signature"}
 
-            artifact_id = session["artifact_info"]["artifact_id"]
+            # Verify embedded TSP artifact (stateless verification)
+            logger.info("Verifying embedded TSP artifact...")
 
             tsp = TSP(
                 private_key_path=str(self.server_keys_dir / "private.pem"),
@@ -185,27 +224,18 @@ class TSPAuthServer:
                 mode="verify",
             )
 
-            verification = tsp.verify_artifact(artifact_id, verify_merkle=True)
-            print(f"DEBUG verify_all results: {verification}")
-            print(f"PoW check result: {verification.get('pow_valid', 'N/A')}")
+            # Use stateless verification with embedded data
+            verification = tsp.verify_artifact(tsp_artifact)
 
-            # Manual PoW check for diagnostics
-            try:
-                tsp_session = tsp.restore_artifact(artifact_id)
-                manual_pow = tsp_session.protocol._check_pow(
-                    tsp_session.protocol.seed, tsp_session.protocol.POW_DIFFICULTY
-                )
-                print(f"Manual PoW check: {manual_pow}")
-            except Exception as e:
-                print(f"Manual PoW error: {e}")
+            logger.info(f"Stateless verification result: {verification.get('all_valid', False)}")
 
             if verification.get("all_valid", False):
-                # FIX: Return correct data
                 return {
                     "valid": True,
-                    "session_data": session,  # Session data for request.user
-                    "tsp_session": tsp_session,  # TSPProtocolSession for additional checks
-                    "verification": verification,
+                    "session_data": session,
+                    "artifact_verification": verification,
+                    "token_type": "stateless",
+                    "verification_mode": verification.get("verification_mode", "unknown"),
                 }
             else:
                 return {
@@ -215,18 +245,19 @@ class TSPAuthServer:
                 }
 
         except Exception as e:
-            logger.error(f"Token verification error: {e}")
+            logger.error(f"Stateless token verification error: {e}")
             return {"valid": False, "error": f"Token verification error: {str(e)}"}
 
 
-# Initialize server
-auth_server = TSPAuthServer()
+# Initialize stateless auth server
+auth_server = TSPStatelessAuthServer()
 
 
-def require_auth(f):
-    """Decorator for authentication verification."""
+def require_stateless_auth(f):
+    """Decorator for stateless authentication verification."""
 
     def decorated_function(*args, **kwargs):
+        # Get token from Authorization header or cookie
         token = request.headers.get("Authorization")
         if token and token.startswith("Bearer "):
             token = token[7:]
@@ -236,18 +267,25 @@ def require_auth(f):
         if not token:
             return jsonify({"error": "Missing authentication token"}), 401
 
-        verification = auth_server.verify_session_token(token)
+        # Verify stateless token
+        verification = auth_server.verify_stateless_token(token)
 
         if not verification.get("valid", False):
             return (
                 jsonify(
-                    {"error": "Invalid token", "details": verification.get("error")}
+                    {
+                        "error": "Invalid stateless token",
+                        "details": verification.get("error"),
+                        "token_type": "stateless",
+                    }
                 ),
                 401,
             )
 
+        # Attach session data to request
         request.user = verification["session_data"]
-        request.tsp_session = verification["tsp_session"]
+        request.artifact_verification = verification["artifact_verification"]
+        request.token_type = "stateless"
 
         return f(*args, **kwargs)
 
@@ -257,1008 +295,758 @@ def require_auth(f):
 
 @app.route("/")
 def index():
-    """Modern homepage with beautiful UI."""
+    """Modern stateless authentication interface."""
     return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>TSP Authentication Platform</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-
-            :root {
-                --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                --secondary-gradient: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-                --success-color: #10b981;
-                --error-color: #ef4444;
-                --warning-color: #f59e0b;
-                --border-radius: 16px;
-                --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            }
-
-            body {
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-                background: var(--primary-gradient);
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-                position: relative;
-                overflow: hidden;
-            }
-
-            /* Animated background */
-            body::before {
-                content: '';
-                position: fixed;
-                top: -50%;
-                left: -50%;
-                width: 200%;
-                height: 200%;
-                background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
-                background-size: 50px 50px;
-                animation: backgroundMove 60s linear infinite;
-                z-index: 0;
-            }
-
-            @keyframes backgroundMove {
-                0% { transform: translate(0, 0); }
-                100% { transform: translate(50px, 50px); }
-            }
-
-            .app-container {
-                background: rgba(255, 255, 255, 0.98);
-                backdrop-filter: blur(20px);
-                border-radius: 24px;
-                box-shadow: 
-                    0 20px 40px rgba(0, 0, 0, 0.1),
-                    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
-                width: 100%;
-                max-width: 1200px;
-                min-height: 600px;
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                overflow: hidden;
-                position: relative;
-                z-index: 1;
-                animation: containerEntry 0.6s ease-out;
-            }
-
-            @keyframes containerEntry {
-                from {
-                    opacity: 0;
-                    transform: scale(0.95) translateY(20px);
-                }
-                to {
-                    opacity: 1;
-                    transform: scale(1) translateY(0);
-                }
-            }
-
-            .welcome-section {
-                background: var(--secondary-gradient);
-                color: white;
-                padding: 60px 40px;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                position: relative;
-                overflow: hidden;
-            }
-
-            .welcome-section::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: 
-                    radial-gradient(circle at 20% 80%, rgba(255,255,255,0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 80% 20%, rgba(255,255,255,0.1) 0%, transparent 50%);
-                animation: pulse 4s ease-in-out infinite;
-            }
-
-            @keyframes pulse {
-                0%, 100% { opacity: 0.5; }
-                50% { opacity: 1; }
-            }
-
-            .welcome-content {
-                position: relative;
-                z-index: 1;
-            }
-
-            .logo {
-                font-size: 3rem;
-                font-weight: 700;
-                margin-bottom: 20px;
-                background: linear-gradient(45deg, #ffffff, #a8edea, #fed6e3);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-                animation: gradientShift 3s ease infinite;
-                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
-            }
-
-            @keyframes gradientShift {
-                0%, 100% { background-position: 0% 50%; }
-                50% { background-position: 100% 50%; }
-            }
-
-            .tagline {
-                font-size: 1.3rem;
-                margin-bottom: 30px;
-                opacity: 0.95;
-                line-height: 1.6;
-                text-shadow: 0 1px 2px rgba(0,0,0,0.1);
-            }
-
-            .features {
-                list-style: none;
-            }
-
-            .features li {
-                display: flex;
-                align-items: center;
-                margin-bottom: 15px;
-                font-size: 1rem;
-                opacity: 0.9;
-                transform: translateX(0);
-                transition: var(--transition);
-            }
-
-            .features li:hover {
-                transform: translateX(5px);
-                opacity: 1;
-            }
-
-            .features li::before {
-                content: '✦';
-                margin-right: 12px;
-                color: #a8edea;
-                font-size: 1.2rem;
-                animation: sparkle 2s ease-in-out infinite;
-            }
-
-            @keyframes sparkle {
-                0%, 100% { opacity: 0.5; transform: scale(1); }
-                50% { opacity: 1; transform: scale(1.2); }
-            }
-
-            .auth-section {
-                padding: 60px 40px;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-            }
-
-            .auth-header {
-                text-align: center;
-                margin-bottom: 40px;
-                animation: fadeInUp 0.6s ease-out;
-            }
-
-            @keyframes fadeInUp {
-                from {
-                    opacity: 0;
-                    transform: translateY(20px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-            }
-
-            .auth-title {
-                font-size: 2rem;
-                font-weight: 600;
-                color: #1a202c;
-                margin-bottom: 8px;
-            }
-
-            .auth-subtitle {
-                color: #718096;
-                font-size: 1rem;
-            }
-
-            .login-form {
-                display: none;
-                animation: fadeIn 0.5s ease-out;
-            }
-
-            .login-form.active {
-                display: block;
-            }
-
-            @keyframes fadeIn {
-                from { opacity: 0; }
-                to { opacity: 1; }
-            }
-
-            .form-group {
-                margin-bottom: 24px;
-                position: relative;
-            }
-
-            .form-label {
-                display: block;
-                font-weight: 500;
-                color: #374151;
-                margin-bottom: 8px;
-                font-size: 0.9rem;
-                transition: var(--transition);
-            }
-
-            .form-input {
-                width: 100%;
-                padding: 16px 20px;
-                border: 2px solid #e5e7eb;
-                border-radius: 12px;
-                font-size: 1rem;
-                transition: var(--transition);
-                background: #ffffff;
-            }
-
-            .form-input:focus {
-                outline: none;
-                border-color: #3b82f6;
-                box-shadow: 
-                    0 0 0 4px rgba(59, 130, 246, 0.1),
-                    0 4px 6px rgba(0, 0, 0, 0.05);
-                transform: translateY(-1px);
-            }
-
-            .form-input:hover {
-                border-color: #cbd5e0;
-            }
-
-            .form-button {
-                width: 100%;
-                padding: 16px;
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-                color: white;
-                border: none;
-                border-radius: 12px;
-                font-size: 1rem;
-                font-weight: 600;
-                cursor: pointer;
-                transition: var(--transition);
-                position: relative;
-                overflow: hidden;
-                box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
-            }
-
-            .form-button::before {
-                content: '';
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                width: 0;
-                height: 0;
-                border-radius: 50%;
-                background: rgba(255, 255, 255, 0.3);
-                transform: translate(-50%, -50%);
-                transition: width 0.6s, height 0.6s;
-            }
-
-            .form-button:hover::before {
-                width: 300px;
-                height: 300px;
-            }
-
-            .form-button:hover {
-                transform: translateY(-2px);
-                box-shadow: 
-                    0 10px 25px rgba(59, 130, 246, 0.4),
-                    0 4px 8px rgba(0, 0, 0, 0.1);
-            }
-
-            .form-button:active {
-                transform: translateY(0);
-            }
-
-            .form-button:disabled {
-                opacity: 0.7;
-                cursor: not-allowed;
-                transform: none;
-                box-shadow: none;
-            }
-
-            .form-button .loading-spinner {
-                display: none;
-                width: 20px;
-                height: 20px;
-                border: 2px solid transparent;
-                border-top: 2px solid white;
-                border-radius: 50%;
-                animation: spin 1s linear infinite;
-                margin-right: 8px;
-            }
-
-            .form-button.loading .loading-spinner {
-                display: inline-block;
-            }
-
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-
-            .demo-users {
-                margin-top: 30px;
-                padding: 20px;
-                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-                border-radius: 12px;
-                border: 1px solid #e2e8f0;
-                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-            }
-
-            .demo-title {
-                font-weight: 600;
-                color: #374151;
-                margin-bottom: 15px;
-                font-size: 0.9rem;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-
-            .user-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 12px;
-            }
-
-            .user-card {
-                background: white;
-                padding: 16px;
-                border-radius: 10px;
-                border: 2px solid #e5e7eb;
-                cursor: pointer;
-                transition: var(--transition);
-                text-align: center;
-                position: relative;
-                overflow: hidden;
-            }
-
-            .user-card::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-                opacity: 0;
-                transition: opacity 0.3s;
-                z-index: 0;
-            }
-
-            .user-card:hover::before {
-                opacity: 0.05;
-            }
-
-            .user-card:hover {
-                border-color: #3b82f6;
-                transform: translateY(-2px);
-                box-shadow: 0 8px 16px rgba(59, 130, 246, 0.15);
-            }
-
-            .user-card > * {
-                position: relative;
-                z-index: 1;
-            }
-
-            .user-avatar {
-                font-size: 2rem;
-                margin-bottom: 8px;
-                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
-            }
-
-            .user-name {
-                font-weight: 600;
-                font-size: 0.9rem;
-                color: #374151;
-                margin-bottom: 4px;
-            }
-
-            .user-role {
-                font-size: 0.75rem;
-                color: #6b7280;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                padding: 2px 8px;
-                background: #f3f4f6;
-                border-radius: 4px;
-                display: inline-block;
-            }
-
-            .status-card {
-                margin-top: 20px;
-                padding: 20px;
-                border-radius: 12px;
-                background: #f8fafc;
-                border-left: 4px solid #3b82f6;
-                display: none;
-                position: relative;
-                overflow: hidden;
-            }
-
-            .status-card::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                right: 0;
-                width: 100px;
-                height: 100px;
-                background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
-                animation: statusPulse 2s ease-in-out infinite;
-            }
-
-            @keyframes statusPulse {
-                0%, 100% { transform: scale(1); opacity: 0.5; }
-                50% { transform: scale(1.2); opacity: 1; }
-            }
-
-            .status-card.show {
-                display: block;
-                animation: slideIn 0.3s ease;
-            }
-
-            @keyframes slideIn {
-                from { 
-                    opacity: 0; 
-                    transform: translateY(20px);
-                }
-                to { 
-                    opacity: 1; 
-                    transform: translateY(0);
-                }
-            }
-
-            .status-title {
-                font-weight: 600;
-                color: #374151;
-                margin-bottom: 8px;
-                position: relative;
-                z-index: 1;
-            }
-
-            .status-text {
-                color: #6b7280;
-                font-size: 0.9rem;
-                line-height: 1.5;
-                position: relative;
-                z-index: 1;
-            }
-
-            .success { 
-                border-left-color: var(--success-color); 
-                background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-            }
-            .success .status-title { color: #065f46; }
-            .success .status-text { color: #047857; }
-
-            .error { 
-                border-left-color: var(--error-color); 
-                background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-            }
-            .error .status-title { color: #991b1b; }
-            .error .status-text { color: #dc2626; }
-
-            .dashboard {
-                display: none;
-                grid-template-columns: 1fr;
-                gap: 0;
-            }
-
-            .dashboard.active {
-                display: grid;
-            }
-
-            .dashboard-header {
-                background: var(--secondary-gradient);
-                color: white;
-                padding: 30px 40px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                position: relative;
-                overflow: hidden;
-            }
-
-            .dashboard-header::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.1) 0%, transparent 50%);
-                animation: pulse 4s ease-in-out infinite;
-            }
-
-            .user-info {
-                display: flex;
-                align-items: center;
-                gap: 15px;
-                position: relative;
-                z-index: 1;
-            }
-
-            .user-avatar-large {
-                font-size: 2.5rem;
-                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
-            }
-
-            .user-details h2 {
-                font-size: 1.5rem;
-                margin-bottom: 4px;
-                text-shadow: 0 1px 2px rgba(0,0,0,0.1);
-            }
-
-            .user-details p {
-                opacity: 0.9;
-                font-size: 0.9rem;
-            }
-
-            .logout-button {
-                background: rgba(255, 255, 255, 0.2);
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                color: white;
-                padding: 12px 24px;
-                border-radius: 8px;
-                cursor: pointer;
-                transition: var(--transition);
-                font-weight: 500;
-                backdrop-filter: blur(10px);
-                position: relative;
-                z-index: 1;
-            }
-
-            .logout-button:hover {
-                background: rgba(255, 255, 255, 0.3);
-                transform: translateY(-1px);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            }
-
-            .dashboard-content {
-                padding: 40px;
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 30px;
-            }
-
-            .dashboard-card {
-                background: white;
-                padding: 24px;
-                border-radius: 16px;
-                box-shadow: 
-                    0 4px 12px rgba(0, 0, 0, 0.05),
-                    0 0 0 1px rgba(0, 0, 0, 0.05);
-                border: 1px solid #e5e7eb;
-                transition: var(--transition);
-            }
-
-            .dashboard-card:hover {
-                transform: translateY(-2px);
-                box-shadow: 
-                    0 8px 24px rgba(0, 0, 0, 0.1),
-                    0 0 0 1px rgba(59, 130, 246, 0.2);
-            }
-
-            .card-title {
-                font-weight: 600;
-                color: #1f2937;
-                margin-bottom: 16px;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 1.1rem;
-            }
-
-            .card-content {
-                color: #6b7280;
-                font-size: 0.9rem;
-                line-height: 1.8;
-            }
-
-            .card-content strong {
-                color: #374151;
-                font-weight: 600;
-            }
-
-            .api-button {
-                background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-                border: 1px solid #d1d5db;
-                padding: 12px 20px;
-                border-radius: 8px;
-                cursor: pointer;
-                transition: var(--transition);
-                margin: 8px 8px 8px 0;
-                font-size: 0.85rem;
-                font-weight: 500;
-                position: relative;
-                overflow: hidden;
-            }
-
-            .api-button::before {
-                content: '';
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                width: 0;
-                height: 0;
-                background: rgba(59, 130, 246, 0.1);
-                border-radius: 50%;
-                transform: translate(-50%, -50%);
-                transition: width 0.3s, height 0.3s;
-            }
-
-            .api-button:hover::before {
-                width: 100px;
-                height: 100px;
-            }
-
-            .api-button:hover {
-                background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
-                border-color: #9ca3af;
-                transform: translateY(-1px);
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            }
-
-            .response-area {
-                background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-                color: #e5e7eb;
-                padding: 16px;
-                border-radius: 8px;
-                font-family: 'SF Mono', Monaco, monospace;
-                font-size: 0.8rem;
-                margin-top: 16px;
-                max-height: 200px;
-                overflow-y: auto;
-                box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
-                border: 1px solid #374151;
-            }
-
-            /* Scrollbar styling */
-            .response-area::-webkit-scrollbar {
-                width: 8px;
-            }
-
-            .response-area::-webkit-scrollbar-track {
-                background: #374151;
-                border-radius: 4px;
-            }
-
-            .response-area::-webkit-scrollbar-thumb {
-                background: #6b7280;
-                border-radius: 4px;
-            }
-
-            .response-area::-webkit-scrollbar-thumb:hover {
-                background: #9ca3af;
-            }
-
-            @media (max-width: 768px) {
-                .app-container {
-                    grid-template-columns: 1fr;
-                    max-width: 500px;
-                }
-
-                .welcome-section {
-                    padding: 40px 30px;
-                    min-height: auto;
-                }
-
-                .auth-section {
-                    padding: 40px 30px;
-                }
-
-                .dashboard-content {
-                    grid-template-columns: 1fr;
-                    padding: 30px;
-                }
-
-                .user-grid {
-                    grid-template-columns: 1fr;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="app-container">
-            <!-- Welcome Section -->
-            <div class="welcome-section">
-                <div class="welcome-content">
-                    <div class="logo">🛡️ TSP</div>
-                    <div class="tagline">
-                        Next-generation authentication powered by cryptographic proof-of-work
-                    </div>
-                    <ul class="features">
-                        <li>Stateless session management</li>
-                        <li>Anti-spam PoW protection</li>
-                        <li>Cryptographically secure tokens</li>
-                        <li>No server-side storage required</li>
-                    </ul>
-                </div>
-            </div>
-
-            <!-- Authentication Section -->
-            <div class="auth-section">
-                <div class="login-form active" id="login-form">
-                    <div class="auth-header">
-                        <h1 class="auth-title">Welcome Back</h1>
-                        <p class="auth-subtitle">Sign in to your account using TSP authentication</p>
-                    </div>
-
-                    <form onsubmit="handleLogin(event)">
-                        <div class="form-group">
-                            <label class="form-label">Username</label>
-                            <input type="text" class="form-input" id="username" required placeholder="Enter your username">
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Password</label>
-                            <input type="password" class="form-input" id="password" required placeholder="Enter your password">
-                        </div>
-
-                        <button type="submit" class="form-button" id="login-button">
-                            <span class="loading-spinner"></span>
-                            <span class="button-text">Sign In with TSP</span>
-                        </button>
-                    </form>
-
-                    <div class="demo-users">
-                        <div class="demo-title">🎯 Quick Demo Access</div>
-                        <div class="user-grid">
-                            <div class="user-card" onclick="selectUser('alice', 'alice123')">
-                                <div class="user-avatar">👩‍💼</div>
-                                <div class="user-name">Alice</div>
-                                <div class="user-role">Admin</div>
-                            </div>
-                            <div class="user-card" onclick="selectUser('bob', 'bob456')">
-                                <div class="user-avatar">👨‍💻</div>
-                                <div class="user-name">Bob</div>
-                                <div class="user-role">User</div>
-                            </div>
-                            <div class="user-card" onclick="selectUser('charlie', 'charlie789')">
-                                <div class="user-avatar">👨‍🔬</div>
-                                <div class="user-name">Charlie</div>
-                                <div class="user-role">User</div>
-                            </div>
-                            <div class="user-card" onclick="selectUser('demo', 'demo')">
-                                <div class="user-avatar">🎭</div>
-                                <div class="user-name">Demo</div>
-                                <div class="user-role">Guest</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="status-card" id="status-card">
-                        <div class="status-title" id="status-title">Status</div>
-                        <div class="status-text" id="status-text">Ready to authenticate</div>
-                    </div>
-                </div>
-
-                <!-- Dashboard -->
-                <div class="dashboard" id="dashboard">
-                    <div class="dashboard-header">
-                        <div class="user-info">
-                            <div class="user-avatar-large" id="user-avatar">👤</div>
-                            <div class="user-details">
-                                <h2 id="user-name">User</h2>
-                                <p id="user-role">Role</p>
-                            </div>
-                        </div>
-                        <button class="logout-button" onclick="logout()">Sign Out</button>
-                    </div>
-
-                    <div class="dashboard-content">
-                        <div class="dashboard-card">
-                            <div class="card-title">🔐 Session Information</div>
-                            <div class="card-content" id="session-info">
-                                Loading session data...
-                            </div>
-                        </div>
-
-                        <div class="dashboard-card">
-                            <div class="card-title">🚀 API Testing</div>
-                            <div class="card-content">
-                                Test protected endpoints with your TSP token:
-                                <br><br>
-                                <button class="api-button" onclick="testAPI('/api/profile')">Get Profile</button>
-                                <button class="api-button" onclick="testAPI('/api/secret')">Secret Data</button>
-                                <button class="api-button" onclick="testAPI('/api/stats')">Server Stats</button>
-                                <div class="response-area" id="api-response" style="display: none;"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <script>
-            let currentToken = null;
-            let currentUser = null;
-
-            function selectUser(username, password) {
-                document.getElementById('username').value = username;
-                document.getElementById('password').value = password;
-                // Add visual feedback
-                document.querySelectorAll('.user-card').forEach(card => {
-                    card.style.transform = 'scale(1)';
-                });
-                event.currentTarget.style.transform = 'scale(0.95)';
-                setTimeout(() => {
-                    event.currentTarget.style.transform = '';
-                }, 200);
-            }
-
-            function showStatus(title, text, type = 'info') {
-                const card = document.getElementById('status-card');
-                const titleEl = document.getElementById('status-title');
-                const textEl = document.getElementById('status-text');
-
-                titleEl.textContent = title;
-                textEl.innerHTML = text;
-
-                card.className = `status-card show ${type}`;
-            }
-
-            async function handleLogin(event) {
-                event.preventDefault();
-
-                const username = document.getElementById('username').value;
-                const password = document.getElementById('password').value;
-                const button = document.getElementById('login-button');
-                const buttonText = button.querySelector('.button-text');
-
-                if (!username || !password) {
-                    showStatus('Error', 'Please fill in all fields', 'error');
-                    return;
-                }
-
-                // Show loading state
-                button.classList.add('loading');
-                button.disabled = true;
-                buttonText.textContent = 'Creating TSP Token...';
-
-                showStatus('⚡ Authentication', 'Mining cryptographic proof-of-work token...', 'info');
-
-                try {
-                    const response = await fetch('/api/login', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({username, password})
-                    });
-
-                    const data = await response.json();
-
-                    if (data.success) {
-                        currentToken = data.token;
-                        currentUser = data.user;
-
-                        showStatus('✅ Success!', 
-                            `<strong>TSP token created successfully!</strong><br>
-                             <span style="font-size: 0.85rem; opacity: 0.9;">
-                             Artifact ID: ${data.artifact.artifact_id}<br>
-                             Rarity: ${data.artifact.rarity}<br>
-                             Hash: ${data.artifact.config_hash.substring(0, 16)}...<br>
-                             </span>
-                             <span style="font-size: 0.9rem;">Redirecting to dashboard...</span>`, 'success');
-
-                        setTimeout(() => {
-                            showDashboard(data.user, data.artifact);
-                        }, 2000);
-
-                    } else {
-                        showStatus('❌ Authentication Failed', data.error, 'error');
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>TSP Stateless Authentication</title>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+                <style>
+                    * {
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
                     }
-                } catch (error) {
-                    showStatus('⚠️ Error', `Network error: ${error.message}`, 'error');
-                } finally {
-                    button.classList.remove('loading');
-                    button.disabled = false;
-                    buttonText.textContent = 'Sign In with TSP';
-                }
-            }
-
-            function showDashboard(user, artifact) {
-                document.getElementById('login-form').classList.remove('active');
-                document.getElementById('dashboard').classList.add('active');
-
-                // Update user info
-                const userAvatars = {
-                    'alice': '👩‍💼',
-                    'bob': '👨‍💻', 
-                    'charlie': '👨‍🔬',
-                    'demo': '🎭'
-                };
-
-                document.getElementById('user-avatar').textContent = userAvatars[user.username] || '👤';
-                document.getElementById('user-name').textContent = user.username.charAt(0).toUpperCase() + user.username.slice(1);
-                document.getElementById('user-role').textContent = user.role.charAt(0).toUpperCase() + user.role.slice(1);
-
-                // Update session info with better formatting
-                const createdAt = new Date().toLocaleString();
-                document.getElementById('session-info').innerHTML = `
-                    <strong>User ID:</strong> ${user.user_id}<br>
-                    <strong>Username:</strong> ${user.username}<br>
-                    <strong>Role:</strong> <span style="display: inline-block; padding: 2px 8px; background: #f3f4f6; border-radius: 4px; font-size: 0.85rem;">${user.role.toUpperCase()}</span><br>
-                    <strong>Artifact ID:</strong> ${artifact.artifact_id}<br>
-                    <strong>Config Hash:</strong> <code style="background: #f3f4f6; padding: 2px 4px; border-radius: 3px; font-size: 0.85rem;">${artifact.config_hash.substring(0, 20)}...</code><br>
-                    <strong>Rarity:</strong> <span style="color: #3b82f6; font-weight: 600;">${artifact.rarity}</span><br>
-                    <strong>Session Created:</strong> ${createdAt}
-                `;
-            }
-
-            async function testAPI(endpoint) {
-                if (!currentToken) {
-                    showAPIResponse('Error: No authentication token');
-                    return;
-                }
-
-                showAPIResponse('⏳ Loading...');
-
-                try {
-                    const response = await fetch(endpoint, {
-                        headers: {'Authorization': `Bearer ${currentToken}`}
+            
+                    body {
+                        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        min-height: 100vh;
+                        padding: 20px;
+                    }
+            
+                    .container {
+                        max-width: 1000px;
+                        margin: 0 auto;
+                        background: white;
+                        border-radius: 20px;
+                        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+                        overflow: hidden;
+                        min-height: 600px;
+                    }
+            
+                    /* Header */
+                    .header {
+                        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                        color: white;
+                        padding: 40px;
+                        text-align: center;
+                    }
+            
+                    .logo {
+                        font-size: 2.5rem;
+                        font-weight: 700;
+                        margin-bottom: 10px;
+                    }
+            
+                    .tagline {
+                        font-size: 1.1rem;
+                        opacity: 0.9;
+                        margin-bottom: 20px;
+                    }
+            
+                    .features {
+                        display: flex;
+                        justify-content: center;
+                        flex-wrap: wrap;
+                        gap: 20px;
+                        font-size: 0.9rem;
+                    }
+            
+                    .feature {
+                        background: rgba(255, 255, 255, 0.15);
+                        padding: 8px 16px;
+                        border-radius: 20px;
+                        backdrop-filter: blur(10px);
+                    }
+            
+                    /* Main Content */
+                    .main-content {
+                        display: flex;
+                        min-height: 500px;
+                    }
+            
+                    /* Login Section */
+                    .login-section {
+                        flex: 1;
+                        padding: 40px;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                    }
+            
+                    .login-section.hidden {
+                        display: none;
+                    }
+            
+                    .auth-header {
+                        text-align: center;
+                        margin-bottom: 30px;
+                    }
+            
+                    .auth-title {
+                        font-size: 1.8rem;
+                        font-weight: 600;
+                        color: #1a202c;
+                        margin-bottom: 8px;
+                    }
+            
+                    .stateless-badge {
+                        display: inline-block;
+                        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                        color: white;
+                        padding: 4px 12px;
+                        border-radius: 6px;
+                        font-size: 0.7rem;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        margin-left: 8px;
+                    }
+            
+                    .auth-subtitle {
+                        color: #718096;
+                        font-size: 0.9rem;
+                    }
+            
+                    /* Form Styles */
+                    .form-group {
+                        margin-bottom: 20px;
+                    }
+            
+                    .form-label {
+                        display: block;
+                        font-weight: 500;
+                        color: #374151;
+                        margin-bottom: 6px;
+                        font-size: 0.9rem;
+                    }
+            
+                    .form-input {
+                        width: 100%;
+                        padding: 14px 16px;
+                        border: 2px solid #e5e7eb;
+                        border-radius: 10px;
+                        font-size: 1rem;
+                        transition: all 0.2s ease;
+                        background: #ffffff;
+                    }
+            
+                    .form-input:focus {
+                        outline: none;
+                        border-color: #3b82f6;
+                        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                    }
+            
+                    .form-button {
+                        width: 100%;
+                        padding: 14px;
+                        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+                        color: white;
+                        border: none;
+                        border-radius: 10px;
+                        font-size: 1rem;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 8px;
+                    }
+            
+                    .form-button:hover {
+                        transform: translateY(-2px);
+                        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+                    }
+            
+                    .form-button:disabled {
+                        opacity: 0.7;
+                        cursor: not-allowed;
+                        transform: none;
+                    }
+            
+                    .loading-spinner {
+                        display: none;
+                        width: 18px;
+                        height: 18px;
+                        border: 2px solid transparent;
+                        border-top: 2px solid white;
+                        border-radius: 50%;
+                        animation: spin 1s linear infinite;
+                    }
+            
+                    .form-button.loading .loading-spinner {
+                        display: block;
+                    }
+            
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+            
+                    /* Demo Users */
+                    .demo-section {
+                        background: #f8fafc;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 12px;
+                        padding: 20px;
+                        margin-top: 25px;
+                    }
+            
+                    .demo-title {
+                        font-weight: 600;
+                        color: #374151;
+                        margin-bottom: 15px;
+                        font-size: 0.9rem;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    }
+            
+                    .user-grid {
+                        display: grid;
+                        grid-template-columns: 1fr 1fr;
+                        gap: 10px;
+                    }
+            
+                    .user-card {
+                        background: white;
+                        padding: 15px;
+                        border-radius: 8px;
+                        border: 2px solid #e5e7eb;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                        text-align: center;
+                    }
+            
+                    .user-card:hover {
+                        border-color: #3b82f6;
+                        transform: translateY(-1px);
+                        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+                    }
+            
+                    .user-avatar {
+                        font-size: 1.8rem;
+                        margin-bottom: 6px;
+                    }
+            
+                    .user-name {
+                        font-weight: 600;
+                        font-size: 0.85rem;
+                        color: #374151;
+                        margin-bottom: 2px;
+                    }
+            
+                    .user-role {
+                        font-size: 0.7rem;
+                        color: #6b7280;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                        padding: 2px 6px;
+                        background: #f3f4f6;
+                        border-radius: 4px;
+                        display: inline-block;
+                    }
+            
+                    /* Status Card */
+                    .status-card {
+                        margin-top: 20px;
+                        padding: 16px;
+                        border-radius: 10px;
+                        background: #f8fafc;
+                        border-left: 4px solid #3b82f6;
+                        display: none;
+                    }
+            
+                    .status-card.show {
+                        display: block;
+                        animation: slideIn 0.3s ease;
+                    }
+            
+                    @keyframes slideIn {
+                        from { opacity: 0; transform: translateY(10px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+            
+                    .status-title {
+                        font-weight: 600;
+                        color: #374151;
+                        margin-bottom: 6px;
+                        font-size: 0.9rem;
+                    }
+            
+                    .status-text {
+                        color: #6b7280;
+                        font-size: 0.85rem;
+                        line-height: 1.4;
+                    }
+            
+                    .status-card.success {
+                        border-left-color: #10b981;
+                        background: #f0fdf4;
+                    }
+                    .status-card.success .status-title { color: #065f46; }
+                    .status-card.success .status-text { color: #047857; }
+            
+                    .status-card.error {
+                        border-left-color: #ef4444;
+                        background: #fef2f2;
+                    }
+                    .status-card.error .status-title { color: #991b1b; }
+                    .status-card.error .status-text { color: #dc2626; }
+            
+                    /* Dashboard */
+                    .dashboard {
+                        display: none;
+                        width: 100%;
+                    }
+            
+                    .dashboard.active {
+                        display: block;
+                    }
+            
+                    .dashboard-header {
+                        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                        color: white;
+                        padding: 25px 40px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+            
+                    .user-info {
+                        display: flex;
+                        align-items: center;
+                        gap: 15px;
+                    }
+            
+                    .user-avatar-large {
+                        font-size: 2.2rem;
+                    }
+            
+                    .user-details h2 {
+                        font-size: 1.4rem;
+                        margin-bottom: 4px;
+                    }
+            
+                    .user-details p {
+                        opacity: 0.9;
+                        font-size: 0.85rem;
+                    }
+            
+                    .logout-button {
+                        background: rgba(255, 255, 255, 0.2);
+                        border: 1px solid rgba(255, 255, 255, 0.3);
+                        color: white;
+                        padding: 10px 20px;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                        font-weight: 500;
+                        backdrop-filter: blur(10px);
+                    }
+            
+                    .logout-button:hover {
+                        background: rgba(255, 255, 255, 0.3);
+                        transform: translateY(-1px);
+                    }
+            
+                    .dashboard-content {
+                        padding: 30px;
+                        display: grid;
+                        grid-template-columns: 1fr 1fr;
+                        gap: 25px;
+                    }
+            
+                    .dashboard-card {
+                        background: white;
+                        padding: 25px;
+                        border-radius: 12px;
+                        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+                        border: 1px solid #e5e7eb;
+                        transition: all 0.2s ease;
+                    }
+            
+                    .dashboard-card:hover {
+                        transform: translateY(-2px);
+                        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+                    }
+            
+                    .card-title {
+                        font-weight: 600;
+                        color: #1f2937;
+                        margin-bottom: 15px;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        font-size: 1rem;
+                    }
+            
+                    .card-content {
+                        color: #6b7280;
+                        font-size: 0.85rem;
+                        line-height: 1.6;
+                    }
+            
+                    .card-content strong {
+                        color: #374151;
+                        font-weight: 600;
+                    }
+            
+                    .api-button {
+                        background: #f3f4f6;
+                        border: 1px solid #d1d5db;
+                        padding: 10px 16px;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                        margin: 6px 6px 6px 0;
+                        font-size: 0.8rem;
+                        font-weight: 500;
+                    }
+            
+                    .api-button:hover {
+                        background: #e5e7eb;
+                        border-color: #9ca3af;
+                        transform: translateY(-1px);
+                    }
+            
+                    .response-area {
+                        background: #1f2937;
+                        color: #e5e7eb;
+                        padding: 15px;
+                        border-radius: 6px;
+                        font-family: 'SF Mono', Monaco, monospace;
+                        font-size: 0.75rem;
+                        margin-top: 15px;
+                        max-height: 180px;
+                        overflow-y: auto;
+                        border: 1px solid #374151;
+                    }
+            
+                    /* Responsive */
+                    @media (max-width: 768px) {
+                        .container {
+                            margin: 10px;
+                            border-radius: 15px;
+                        }
+            
+                        .main-content {
+                            flex-direction: column;
+                        }
+            
+                        .header {
+                            padding: 30px 20px;
+                        }
+            
+                        .features {
+                            flex-direction: column;
+                            align-items: center;
+                        }
+            
+                        .login-section {
+                            padding: 30px 20px;
+                        }
+            
+                        .user-grid {
+                            grid-template-columns: 1fr;
+                        }
+            
+                        .dashboard-content {
+                            grid-template-columns: 1fr;
+                            padding: 20px;
+                        }
+            
+                        .dashboard-header {
+                            padding: 20px;
+                            flex-direction: column;
+                            gap: 15px;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <!-- Header -->
+                    <div class="header">
+                        <div class="logo">⚡ TSP Stateless</div>
+                        <div class="tagline">Zero-storage authentication with embedded cryptographic proof-of-work</div>
+                        <div class="features">
+                            <div class="feature">No Server Storage</div>
+                            <div class="feature">Embedded Verification</div>
+                            <div class="feature">Infinite Scaling</div>
+                            <div class="feature">Microservices Ready</div>
+                        </div>
+                    </div>
+            
+                    <!-- Main Content -->
+                    <div class="main-content">
+                        <!-- Login Section -->
+                        <div class="login-section" id="login-form">
+                            <div class="auth-header">
+                                <h1 class="auth-title">Stateless Login <span class="stateless-badge">Zero Storage</span></h1>
+                                <p class="auth-subtitle">Authenticate with self-contained TSP tokens</p>
+                            </div>
+            
+                            <form onsubmit="handleLogin(event)">
+                                <div class="form-group">
+                                    <label class="form-label">Username</label>
+                                    <input type="text" class="form-input" id="username" required placeholder="Enter your username">
+                                </div>
+            
+                                <div class="form-group">
+                                    <label class="form-label">Password</label>
+                                    <input type="password" class="form-input" id="password" required placeholder="Enter your password">
+                                </div>
+            
+                                <button type="submit" class="form-button" id="login-button">
+                                    <span class="loading-spinner"></span>
+                                    <span class="button-text">Create Stateless Token</span>
+                                </button>
+                            </form>
+            
+                            <div class="demo-section">
+                                <div class="demo-title">⚡ Quick Demo Access</div>
+                                <div class="user-grid">
+                                    <div class="user-card" onclick="selectUser('alice', 'alice123', this)">
+                                        <div class="user-avatar">👩‍💼</div>
+                                        <div class="user-name">Alice</div>
+                                        <div class="user-role">Admin</div>
+                                    </div>
+                                    <div class="user-card" onclick="selectUser('bob', 'bob456', this)">
+                                        <div class="user-avatar">👨‍💻</div>
+                                        <div class="user-name">Bob</div>
+                                        <div class="user-role">User</div>
+                                    </div>
+                                    <div class="user-card" onclick="selectUser('charlie', 'charlie789', this)">
+                                        <div class="user-avatar">👨‍🔬</div>
+                                        <div class="user-name">Charlie</div>
+                                        <div class="user-role">User</div>
+                                    </div>
+                                    <div class="user-card" onclick="selectUser('demo', 'demo', this)">
+                                        <div class="user-avatar">🎭</div>
+                                        <div class="user-name">Demo</div>
+                                        <div class="user-role">Guest</div>
+                                    </div>
+                                </div>
+                            </div>
+            
+                            <div class="status-card" id="status-card">
+                                <div class="status-title" id="status-title">Status</div>
+                                <div class="status-text" id="status-text">Ready for stateless authentication</div>
+                            </div>
+                        </div>
+            
+                        <!-- Dashboard -->
+                        <div class="dashboard" id="dashboard">
+                            <div class="dashboard-header">
+                                <div class="user-info">
+                                    <div class="user-avatar-large" id="user-avatar">👤</div>
+                                    <div class="user-details">
+                                        <h2 id="user-name">User</h2>
+                                        <p id="user-role">Stateless Session Active</p>
+                                    </div>
+                                </div>
+                                <button class="logout-button" onclick="logout()">Sign Out</button>
+                            </div>
+            
+                            <div class="dashboard-content">
+                                <div class="dashboard-card">
+                                    <div class="card-title">⚡ Stateless Session Info</div>
+                                    <div class="card-content" id="session-info">
+                                        Loading stateless session data...
+                                    </div>
+                                </div>
+            
+                                <div class="dashboard-card">
+                                    <div class="card-title">🚀 API Testing</div>
+                                    <div class="card-content">
+                                        Test endpoints with your stateless token:
+                                        <br><br>
+                                        <button class="api-button" onclick="testAPI('/api/profile')">Get Profile</button>
+                                        <button class="api-button" onclick="testAPI('/api/secret')">Secret Data</button>
+                                        <button class="api-button" onclick="testAPI('/api/stats')">Server Stats</button>
+                                        <button class="api-button" onclick="testAPI('/api/token-info')">Token Info</button>
+                                        <div class="response-area" id="api-response" style="display: none;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            
+                <script>
+                    let currentToken = null;
+                    let currentUser = null;
+            
+                    function selectUser(username, password, element) {
+                        document.getElementById('username').value = username;
+                        document.getElementById('password').value = password;
+                        element.style.transform = 'scale(0.95)';
+                        setTimeout(() => {
+                            element.style.transform = '';
+                        }, 200);
+                    }
+            
+                    function showStatus(title, text, type = 'info') {
+                        const card = document.getElementById('status-card');
+                        const titleEl = document.getElementById('status-title');
+                        const textEl = document.getElementById('status-text');
+            
+                        titleEl.textContent = title;
+                        textEl.innerHTML = text;
+            
+                        card.className = `status-card show ${type}`;
+                    }
+            
+                    async function handleLogin(event) {
+                        event.preventDefault();
+            
+                        const username = document.getElementById('username').value;
+                        const password = document.getElementById('password').value;
+                        const button = document.getElementById('login-button');
+                        const buttonText = button.querySelector('.button-text');
+            
+                        if (!username || !password) {
+                            showStatus('Error', 'Please fill in all fields', 'error');
+                            return;
+                        }
+            
+                        button.classList.add('loading');
+                        button.disabled = true;
+                        buttonText.textContent = 'Mining Stateless Token...';
+            
+                        showStatus('⚡ Stateless Auth', 'Creating self-contained token with embedded TSP artifact...', 'info');
+            
+                        try {
+                            const response = await fetch('/api/login', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({username, password})
+                            });
+            
+                            const data = await response.json();
+            
+                            if (data.success) {
+                                currentToken = data.token;
+                                currentUser = data.user;
+            
+                                showStatus('✅ Stateless Success!', 
+                                    `<strong>Self-contained token created!</strong><br>
+                                     <span style="font-size: 0.8rem; opacity: 0.9;">
+                                     Mining time: ${data.mining_time.toFixed(3)}s<br>
+                                     Token size: ${data.token_size} bytes<br>
+                                     Config hash: ${data.artifact_summary.config_hash.substring(0, 16)}...<br>
+                                     Rarity: ${data.artifact_summary.rarity}<br>
+                                     </span>
+                                     <span style="font-size: 0.85rem;">No server storage used!</span>`, 'success');
+            
+                                setTimeout(() => {
+                                    showDashboard(data.user, data.artifact_summary, data.metadata);
+                                }, 2000);
+            
+                            } else {
+                                showStatus('❌ Authentication Failed', data.error, 'error');
+                            }
+                        } catch (error) {
+                            showStatus('⚠️ Error', `Network error: ${error.message}`, 'error');
+                        } finally {
+                            button.classList.remove('loading');
+                            button.disabled = false;
+                            buttonText.textContent = 'Create Stateless Token';
+                        }
+                    }
+            
+                    function showDashboard(user, artifact, metadata) {
+                        document.getElementById('login-form').classList.add('hidden');
+                        document.getElementById('dashboard').classList.add('active');
+            
+                        const userAvatars = {
+                            'alice': '👩‍💼',
+                            'bob': '👨‍💻', 
+                            'charlie': '👨‍🔬',
+                            'demo': '🎭'
+                        };
+            
+                        document.getElementById('user-avatar').textContent = userAvatars[user.username] || '👤';
+                        document.getElementById('user-name').textContent = user.username.charAt(0).toUpperCase() + user.username.slice(1);
+                        document.getElementById('user-role').textContent = `${user.role.charAt(0).toUpperCase() + user.role.slice(1)} • Stateless Session`;
+            
+                        const createdAt = new Date().toLocaleString();
+                        document.getElementById('session-info').innerHTML = `
+                            <strong>Token Type:</strong> <span style="color: #10b981; font-weight: 600;">Stateless</span><br>
+                            <strong>User ID:</strong> ${user.user_id}<br>
+                            <strong>Username:</strong> ${user.username}<br>
+                            <strong>Department:</strong> ${user.department}<br>
+                            <strong>Config Hash:</strong> <code style="background: #f3f4f6; padding: 2px 4px; border-radius: 3px; font-size: 0.8rem;">${artifact.config_hash.substring(0, 20)}...</code><br>
+                            <strong>Mining Time:</strong> <span style="color: #3b82f6; font-weight: 600;">${metadata.mining_time}s</span><br>
+                            <strong>Rarity:</strong> <span style="color: #3b82f6; font-weight: 600;">${artifact.rarity}</span><br>
+                            <strong>Session Created:</strong> ${createdAt}<br>
+                            <strong>Storage Used:</strong> <span style="color: #10b981; font-weight: 600;">0 bytes (stateless)</span>
+                        `;
+                    }
+            
+                    async function testAPI(endpoint) {
+                        if (!currentToken) {
+                            showAPIResponse('Error: No authentication token');
+                            return;
+                        }
+            
+                        showAPIResponse('⏳ Testing stateless verification...');
+            
+                        try {
+                            const response = await fetch(endpoint, {
+                                headers: {'Authorization': `Bearer ${currentToken}`}
+                            });
+            
+                            const data = await response.json();
+                            showAPIResponse(JSON.stringify(data, null, 2));
+                        } catch (error) {
+                            showAPIResponse(`❌ Error: ${error.message}`);
+                        }
+                    }
+            
+                    function showAPIResponse(content) {
+                        const responseArea = document.getElementById('api-response');
+                        responseArea.textContent = content;
+                        responseArea.style.display = 'block';
+                        responseArea.scrollTop = 0;
+                    }
+            
+                    function logout() {
+                        currentToken = null;
+                        currentUser = null;
+            
+                        document.getElementById('dashboard').classList.remove('active');
+                        document.getElementById('login-form').classList.remove('hidden');
+            
+                        document.getElementById('username').value = '';
+                        document.getElementById('password').value = '';
+            
+                        showStatus('👋 Signed Out', 'Stateless session ended (no cleanup required)', 'info');
+                    }
+            
+                    // Keyboard shortcut for demo
+                    document.addEventListener('keydown', (e) => {
+                        if (e.ctrlKey && e.key === 'd') {
+                            document.getElementById('username').value = 'demo';
+                            document.getElementById('password').value = 'demo';
+                            document.getElementById('login-button').click();
+                        }
                     });
-
-                    const data = await response.json();
-                    showAPIResponse(JSON.stringify(data, null, 2));
-                } catch (error) {
-                    showAPIResponse(`❌ Error: ${error.message}`);
-                }
-            }
-
-            function showAPIResponse(content) {
-                const responseArea = document.getElementById('api-response');
-                responseArea.textContent = content;
-                responseArea.style.display = 'block';
-                // Smooth scroll to response
-                responseArea.scrollTop = 0;
-            }
-
-            function logout() {
-                currentToken = null;
-                currentUser = null;
-
-                document.getElementById('dashboard').classList.remove('active');
-                document.getElementById('login-form').classList.add('active');
-
-                // Clear form
-                document.getElementById('username').value = '';
-                document.getElementById('password').value = '';
-
-                showStatus('👋 Signed Out', 'You have been successfully signed out', 'info');
-            }
-
-            // Add keyboard shortcut for quick demo login
-            document.addEventListener('keydown', (e) => {
-                if (e.ctrlKey && e.key === 'd') {
-                    selectUser('demo', 'demo');
-                    document.getElementById('login-button').click();
-                }
-            });
-        </script>
-    </body>
-    </html>
-    """
+                </script>
+            </body>
+            </html>    
+            """
 
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    """API endpoint for login."""
+    """Stateless authentication endpoint."""
     try:
         data = request.get_json()
         username = data.get("username")
@@ -1270,11 +1058,13 @@ def api_login():
                 400,
             )
 
+        # Authenticate user
         user = auth_server.authenticate_user(username, password)
         if not user:
             return jsonify({"success": False, "error": "Invalid credentials"}), 401
 
-        token_result = auth_server.create_session_token(
+        # Create stateless token
+        token_result = auth_server.create_stateless_token(
             user_id=user["user_id"], username=username, duration_hours=24
         )
 
@@ -1287,30 +1077,37 @@ def api_login():
                     "username": username,
                     "role": user["role"],
                     "avatar": user["avatar"],
+                    "full_name": user["full_name"],
+                    "department": user["department"],
                 },
-                "artifact": token_result["artifact"],
-                "expires_at": token_result["metadata"]["expires_at"],
+                "artifact_summary": token_result["artifact_summary"],
+                "metadata": token_result["metadata"],
+                "token_size": token_result["token_size"],
+                "mining_time": token_result["mining_time"],
+                "token_type": "stateless",
             }
             return jsonify(response_data)
         else:
             return jsonify({"success": False, "error": token_result["error"]}), 500
 
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.error(f"Stateless login error: {e}")
         return jsonify({"success": False, "error": "Internal server error"}), 500
 
 
 @app.route("/api/profile")
-@require_auth
+@require_stateless_auth
 def api_profile():
-    """Protected endpoint - user profile."""
+    """Protected endpoint - user profile with stateless verification."""
     return jsonify(
         {
             "user_id": request.user["user_id"],
             "username": request.user["username"],
             "created_at": request.user["created_at"],
             "expires_at": request.user["expires_at"],
-            "artifact_info": request.user["artifact_info"],
+            "mining_time": request.user["mining_time"],
+            "token_type": request.token_type,
+            "verification_mode": request.artifact_verification["verification_mode"],
             "session_age_minutes": int(
                 (
                     datetime.utcnow()
@@ -1318,31 +1115,73 @@ def api_profile():
                 ).total_seconds()
                 / 60
             ),
+            "artifact_info": {
+                "config_hash": request.user["artifact_summary"]["config_hash"],
+                "rarity": request.user["artifact_summary"]["rarity"],
+                "creation_timestamp": request.user["artifact_summary"]["creation_timestamp"],
+                "all_valid": request.artifact_verification["all_valid"],
+            },
         }
     )
 
 
 @app.route("/api/secret")
-@require_auth
+@require_stateless_auth
 def api_secret():
-    """Protected endpoint - secret data."""
+    """Protected endpoint - secret data with stateless access control."""
     return jsonify(
         {
-            "message": "This is highly classified information!",
+            "message": "This is classified data accessible via stateless authentication!",
             "user": request.user["username"],
             "server_time": datetime.utcnow().isoformat(),
-            "access_level": "authenticated",
+            "access_level": "stateless_authenticated",
+            "token_type": request.token_type,
             "classified_data": {
-                "security_clearance": "TOP SECRET",
-                "access_code": "TSP-SECURE-2025",
-                "account_balance": 2500000,
-                "crypto_keys": ["rsa-4096", "ed25519", "secp256k1"],
-                "permissions": ["read", "write", "admin", "deploy"],
+                "security_clearance": "TOP SECRET - STATELESS",
+                "access_code": "TSP-STATELESS-2025",
+                "account_balance": 5000000,
+                "crypto_assets": ["Bitcoin", "Ethereum", "TSP-Tokens"],
+                "permissions": ["read", "write", "admin", "stateless_deploy"],
+                "special_access": "Zero-storage verification successful",
             },
-            "session_metadata": {
-                "artifact_id": request.user["artifact_info"]["artifact_id"],
-                "rarity": request.user["artifact_info"]["rarity"],
-                "is_personalized": request.user["artifact_info"]["is_personalized"],
+            "stateless_metadata": {
+                "verification_mode": request.artifact_verification["verification_mode"],
+                "config_hash": request.user["artifact_summary"]["config_hash"],
+                "mining_time": request.user["mining_time"],
+                "rarity": request.user["artifact_summary"]["rarity"],
+                "server_storage_used": "0 bytes (pure stateless)",
+            },
+        }
+    )
+
+
+@app.route("/api/token-info")
+@require_stateless_auth
+def api_token_info():
+    """Debug endpoint - detailed stateless token information."""
+    return jsonify(
+        {
+            "token_analysis": {
+                "type": "TSP Stateless Token",
+                "embedded_artifact": True,
+                "server_storage": "0 bytes",
+                "verification_mode": request.artifact_verification["verification_mode"],
+                "all_checks_valid": request.artifact_verification["all_valid"],
+            },
+            "session_details": request.user,
+            "artifact_verification": request.artifact_verification,
+            "stateless_benefits": [
+                "No server-side session storage required",
+                "Horizontally scalable without sticky sessions",
+                "Microservices-friendly architecture",
+                "Instant verification without database lookups",
+                "Self-contained cryptographic proof",
+            ],
+            "performance_metrics": {
+                "token_creation_time": f"{request.user['mining_time']}s",
+                "verification_time": "<100ms",
+                "storage_overhead": "0 bytes server-side",
+                "scalability": "Unlimited horizontal scaling",
             },
         }
     )
@@ -1350,35 +1189,49 @@ def api_secret():
 
 @app.route("/api/stats")
 def api_stats():
-    """Public server statistics."""
+    """Public server statistics - stateless architecture info."""
     return jsonify(
         {
-            "server": "Modern TSP Authentication Platform",
-            "protocol_version": "TSP-1.0.0",
+            "server": "TSP Stateless Authentication Platform",
+            "architecture": "Pure Stateless - Zero Storage",
+            "protocol_version": "TSP-Stateless-1.0",
             "model": "WEB_AUTH",
             "registered_users": len(auth_server.users_db),
             "server_time": datetime.utcnow().isoformat(),
+            "session_storage": "0 bytes (stateless architecture)",
             "features": [
-                "Stateless Authentication",
-                "Proof-of-Work Security",
-                "Cryptographic Verification",
-                "Anti-Spam Protection",
+                "Pure Stateless Authentication",
+                "Embedded TSP Artifact Verification",
+                "Zero Server-Side Storage",
+                "Microservices Architecture Ready",
+                "Horizontal Scaling Without Limits",
+                "Cryptographic Proof-of-Work Protection",
             ],
             "demo_accounts": [
-                {"username": "alice", "role": "admin"},
-                {"username": "bob", "role": "user"},
-                {"username": "charlie", "role": "user"},
-                {"username": "demo", "role": "guest"},
+                {"username": "alice", "role": "admin", "department": "Engineering"},
+                {"username": "bob", "role": "user", "department": "Product"},
+                {"username": "charlie", "role": "user", "department": "Research"},
+                {"username": "demo", "role": "guest", "department": "Testing"},
             ],
+            "stateless_advantages": {
+                "scalability": "Unlimited horizontal scaling",
+                "performance": "No database lookups for verification",
+                "reliability": "No single point of failure",
+                "simplicity": "No session management complexity",
+                "security": "Cryptographically self-contained tokens",
+            },
         }
     )
 
 
 if __name__ == "__main__":
-    logger.info("Starting Modern TSP Authentication Server...")
+    logger.info("Starting TSP Stateless Authentication Server...")
+    logger.info("Architecture: Pure stateless - no commits.json, no server storage")
+    logger.info("Token Type: Self-contained with embedded TSP artifacts")
     logger.info(
         "Demo accounts: alice/alice123, bob/bob456, charlie/charlie789, demo/demo"
     )
-    logger.info("Navigate to http://localhost:5000 for modern interface")
+    logger.info("Navigate to http://localhost:5000 for stateless interface")
+    logger.info("Press Ctrl+D on login page for quick demo access")
 
     app.run(debug=True, host="0.0.0.0", port=5000)

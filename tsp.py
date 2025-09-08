@@ -33,17 +33,27 @@ from source.signature import SignatureHandler
 
 class TSP:
     """
-    True State Protocol (TSP) - Main interface for digital artifacts.
-    Provides high-level API for creating and verifying mathematically unique,
-    self-verifying digital artifacts with cryptographic proof-of-work,
-    ownership chains, and stateless verification.
+    True State Protocol (TSP) - Dual-mode interface for digital artifacts.
+
+    Supports two operating modes:
+    1. Stateless mode (persist=False): For ephemeral tokens like WEB_AUTH
+       - Creates artifacts without storing in commits.json
+       - Verification happens directly from artifact data
+       - Maximum performance and scalability
+
+    2. Stateful mode (persist=True): For permanent assets like LICENSE/NFT/CERTIFICATE
+       - Creates artifacts and stores in commits.json registry
+       - Verification through artifact lookup by ID
+       - Full audit trail and uniqueness guarantees
+
     Key features:
     - Create artifacts with configurable computational difficulty
-    - Verify artifacts without external dependencies
+    - Verify artifacts without external dependencies (stateless mode)
     - Restore artifact state from minimal data
     - Support for designated ownership chains
     - Merkle tree integration for batch verification
     - Atomic commit storage with tamper detection
+
     Operating modes:
     - 'create': Generate new artifacts with proof-of-work
     - 'verify': Validate existing artifacts
@@ -79,6 +89,7 @@ class TSP:
         )
         self.merkle_tree = MerkleTree()
         self.mode = mode
+
         # Initialize based on mode
         match mode:
             case "create":
@@ -124,250 +135,6 @@ class TSP:
             pem_content = f.read()
         return TSP.create_pubkey_hash(pem_content)
 
-    def verify_my_ownership(
-        self, artifact_identifier: Union[int, str], verify_merkle: bool = True
-    ) -> Dict:
-        """
-        Verify ownership of artifact using current TSP credentials.
-        Validates that the artifact was created for the current user's
-        public key, performing comprehensive verification including PoW,
-        signatures, and Merkle proof.
-        Args:
-            artifact_identifier: Artifact ID (int) or config hash (str)
-            verify_merkle: Whether to verify Merkle tree inclusion proof
-        Returns:
-            Dict: Comprehensive ownership and verification results including:
-                - artifact_valid: Overall artifact integrity
-                - ownership_valid: Ownership verification result
-                - merkle_valid: Merkle tree verification
-                - all_checks_valid: Combined validation result
-        """
-        if self.mode not in ["verify", "restore"]:
-            self._init_verify_mode()
-
-        # 1. Load artifact data
-        commit_data = self._load_artifact_data(artifact_identifier)
-        # 2. Get creator's public key from commits.json
-        creator_pubkey = bytes.fromhex(commit_data["public_key"])
-        # 3. Create verify-only SignatureHandler for creator
-        creator_signature = SignatureHandler.create_verify_only(creator_pubkey)
-        # 4. Verify artifact as creator
-        session = TSPProtocolSession(
-            controller=Controller(commit_data["model"]),
-            signature_obj=creator_signature,
-            signature_public_key_bytes=creator_pubkey,
-            seed=bytes.fromhex(commit_data["seed"]),
-            signature=bytes.fromhex(commit_data["signature"]),
-            artifact_index=commit_data.get("artifact_index", 0),
-            stored_commit_data=commit_data,
-            expected_combined_hash=bytes.fromhex(commit_data["combined_hash"]),
-            expected_genesis_hash=bytes.fromhex(commit_data["genesis_hash"]),
-            expected_config_hash=bytes.fromhex(commit_data["config_hash"]),
-            designated_owner_hash=(
-                bytes.fromhex(commit_data["designated_owner"])
-                if commit_data.get("designated_owner")
-                else None
-            ),
-            prime=int(commit_data["prime"]) if commit_data.get("prime") else None,
-        )
-        # Correct PoW check
-        print(f"DEBUG PoW:")
-        stored_seed = bytes.fromhex(commit_data["seed"])
-        protocol_seed = session.protocol.seed
-        print(f"stored_seed: {stored_seed.hex()[:32]}...")
-        print(f"protocol_seed: {protocol_seed.hex()[:32]}...")
-        print(f"seeds_match: {stored_seed == protocol_seed}")
-        print(f"pow_difficulty: {session.protocol.POW_DIFFICULTY}")
-        print(f"stored difficulty: {commit_data['pow_difficulty']}")
-        # After fixing init_from_pow() check only final PoW
-        try:
-            pow_result = session.protocol._check_pow(
-                session.protocol.seed, session.protocol.POW_DIFFICULTY
-            )
-            print(
-                f"Final PoW check (diff={session.protocol.POW_DIFFICULTY}): {pow_result}"
-            )
-        except Exception as e:
-            print(f"PoW error: {e}")
-            pow_result = False
-
-        # 5. Check ownership by current instance(self.signature)
-        my_pubkey = self.signature.get_public_bytes()
-        # DEBUG for ownership
-        print(f"DEBUG Ownership:")
-        print(f"My pubkey: {my_pubkey.hex()}")
-        print(
-            f"Designated owner in artifact: {session.protocol.DESIGNATED_OWNER_HASH.hex() if session.protocol.DESIGNATED_OWNER_HASH else None}"
-        )
-        print(f"Is personalized: {bool(session.protocol.OWNERSHIP_FLAGS & 0b0010)}")
-        # Calculate my hash and compare
-        my_hash = hashlib.sha3_256(my_pubkey).digest()
-        print(f"My pubkey hash: {my_hash.hex()}")
-        if session.protocol.DESIGNATED_OWNER_HASH:
-            print(f"Hashes match: {my_hash == session.protocol.DESIGNATED_OWNER_HASH}")
-
-        ownership_valid = session.verify_ownership(my_pubkey)
-        print(f"Final ownership result: {ownership_valid}")
-        # 6. Comprehensive artifact validation - use fixed PoW result
-        artifact_results = session.verify_all()
-        artifact_results["pow_valid"] = pow_result  # Redefine the PoW result
-        # 7. Merkle tree verification
-        merkle_valid = True
-        if verify_merkle:
-            self.debug_merkle_tree_construction(commit_data)
-            merkle_valid = self._verify_merkle_inclusion(commit_data)
-            print(f"Merkle verification: {'Valid' if merkle_valid else 'Invalid'}")
-
-        self.deep_pow_diagnostic(session, commit_data)
-        return {
-            "artifact_valid": artifact_results["all_valid"],
-            "ownership_valid": ownership_valid,
-            "merkle_valid": merkle_valid,
-            "my_pubkey": my_pubkey.hex(),
-            "creator_pubkey": creator_pubkey.hex(),
-            "artifact_index": commit_data.get("artifact_index"),
-            "creation_timestamp": commit_data.get("creation_timestamp"),
-            "rarity": commit_data.get("rarity_threshold"),
-            "is_personalized": commit_data.get("is_personalized", False),
-            "pow_valid": pow_result,  # using correct
-            "signature_valid": artifact_results["signature_valid"],
-            "genesis_valid": artifact_results["genesis_valid"],
-            "config_hash_valid": artifact_results["config_hash_valid"],
-            "prime_valid": artifact_results.get("prime_valid", True),
-            "all_checks_valid": (
-                artifact_results["all_valid"]
-                and ownership_valid
-                and merkle_valid
-                and pow_result  # Add PoW to the overall check
-            ),
-        }
-
-    @staticmethod
-    def deep_pow_diagnostic(session, commit_data):
-        """
-        Perform detailed proof-of-work diagnostic for debugging.
-        Runs multiple validation tests to identify PoW discrepancies
-        including manual verification, stored data comparison, and
-        difficulty range testing.
-        Args:
-            session: TSPProtocolSession instance
-            commit_data: Stored commit data dictionary
-        Returns:
-            bool: PoW validation result
-        """
-        seed = session.protocol.seed
-        difficulty = session.protocol.POW_DIFFICULTY
-        params = session.cfg.get_params()
-        print(f"\nDEEP PoW DIAGNOSTIC:")
-        print(f"Seed: {seed.hex()}")
-        print(f"Difficulty: {difficulty}")
-        print(f"TSP_POW constant: {params['TSP_POW']}")
-
-        def manual_pow_check(seed_bytes, diff, debug_prefix=""):
-            """Manual step-by-step PoW check"""
-            print(f"{debug_prefix} Manual PoW check:")
-            print(f"{debug_prefix} Input seed: {seed_bytes.hex()}")
-            print(f"{debug_prefix} Input difficulty: {diff}")
-            # Difficulty params
-            lb = diff // 8
-            rb = diff % 8
-            mask = (0xFF << (8 - rb)) if rb else 0
-            print(f"   {debug_prefix}  lb={lb}, rb={rb}, mask={mask:02x}")
-            # Making pow_data
-            tsp_pow = params["TSP_POW"]
-            difficulty_bytes = diff.to_bytes(2, "big")
-            pow_data = tsp_pow + seed_bytes + difficulty_bytes
-            print(f"{debug_prefix}  TSP_POW: {tsp_pow}")
-            print(f"{debug_prefix}  difficulty_bytes: {difficulty_bytes.hex()}")
-            print(f"{debug_prefix}  pow_data: {pow_data.hex()}")
-            # Triple SHA3-256
-            h1 = hashlib.sha3_256(pow_data).digest()
-            h2 = hashlib.sha3_256(h1).digest()
-            result = hashlib.sha3_256(h2).digest()
-            print(f"{debug_prefix}  hash1: {h1.hex()}")
-            print(f"{debug_prefix}  hash2: {h2.hex()}")
-            print(f"{debug_prefix}  final: {result.hex()}")
-            # Check for leading zeros
-            violation = 0
-            print(f"{debug_prefix}  Checking leading zeros:")
-            for i in range(lb):
-                byte_val = result[i]
-                violation |= byte_val
-                print(
-                    f"{debug_prefix}    byte[{i}]: {byte_val:02x} (violation: {violation})"
-                )
-            if rb > 0 and lb < len(result):
-                byte_val = result[lb]
-                masked = byte_val & mask
-                violation |= masked
-                print(
-                    f"{debug_prefix}    byte[{lb}] & mask: {byte_val:02x} & {mask:02x} = {masked:02x} (violation: {violation})"
-                )
-            is_valid = violation == 0
-            print(f"{debug_prefix} Final violation: {violation}")
-            print(f"{debug_prefix} Result: {is_valid}")
-            return is_valid
-
-        # Comparative tests
-        try:
-            print(f"\nTEST 1: Session protocol _check_pow")
-            session_result = session.protocol._check_pow(seed, difficulty)
-            print(f"Session result: {session_result}")
-            print(f"\nTEST 2: Manual implementation")
-            manual_result = manual_pow_check(seed, difficulty, "MANUAL: ")
-            print(f"\nTEST 3: Stored data comparison")
-            stored_seed = bytes.fromhex(commit_data["seed"])
-            stored_difficulty = commit_data["pow_difficulty"]
-            print(f"Stored seed == protocol seed: {stored_seed == seed}")
-            print(
-                f"Stored difficulty == protocol difficulty: {stored_difficulty == difficulty}"
-            )
-            if stored_seed == seed and stored_difficulty == difficulty:
-                print(f"✅ Stored data matches protocol data")
-            else:
-                print(f"❌ Stored data MISMATCH!")
-                print(f"Stored seed: {stored_seed.hex()}")
-                print(f"Protocol seed: {seed.hex()}")
-            print(f"\nTEST 4: Manual check on stored data")
-            manual_stored = manual_pow_check(stored_seed, stored_difficulty, "STORED: ")
-            print(f"\nTEST 5: Testing different difficulties")
-            for test_diff in [1, 2, 3, 4]:
-                try:
-                    test_session = session.protocol._check_pow(seed, test_diff)
-                    test_manual = manual_pow_check(
-                        seed, test_diff, f"DIFF{test_diff}: "
-                    )
-                    match = test_session == test_manual
-                    print(
-                        f"Difficulty {test_diff}: session={test_session}, manual={test_manual}, match={match}"
-                    )
-                except Exception as e:
-                    print(f"Difficulty {test_diff}: ERROR = {e}")
-            # Финальные результаты
-            print(f"\nSUMMARY:")
-            print(f"Session PoW result: {session_result}")
-            print(f"Manual PoW result: {manual_result}")
-            print(f"Results match: {session_result == manual_result}")
-            print(
-                f"Overall diagnosis: {'CONSISTENT' if session_result == manual_result else 'INCONSISTENT'}"
-            )
-            return session_result
-        except Exception as e:
-            print(f"   💥 DIAGNOSTIC ERROR: {e}")
-            traceback.print_exc()
-            return False
-
-    def verify_pow(self) -> bool:
-        """
-        Verify proof-of-work for current protocol artifact.
-        Returns:
-            bool: True if PoW constraints satisfied
-        """
-        # Use protocol.seed instead provided_seed
-        return self.protocol._check_pow(
-            self.protocol.seed, self.protocol.POW_DIFFICULTY
-        )
-
     def _init_create_mode(self, designated_owner_hash: Optional[bytes]):
         """
         Initialize TSP for creating new artifacts.
@@ -394,108 +161,288 @@ class TSP:
         """
         self.protocol = None  # Will be set during verification
 
-    def create_artifact(self, personalized_for: Optional[bytes] = None) -> Dict:
+    def create_artifact(
+        self,
+        persist: bool = True,
+        personalized_for: Optional[bytes] = None,
+    ) -> Dict:
         """
-        Create new TSP artifact with proof-of-work.
-        Generates cryptographic prime, creates genesis commitment,
-        and commits artifact to permanent storage with Merkle proof.
+        Create new TSP artifact with configurable persistence.
+
         Args:
+            persist: If True, saves to commits.json (stateful). If False, returns data only (stateless)
             personalized_for: Deprecated - use designated_owner_hash in __init__
+
         Returns:
-            Dict: Artifact creation results including:
-                - artifact_id: Unique identifier
-                - config_hash: Configuration hash
-                - rarity: Computed rarity level
-                - merkle_root: Merkle tree root
-                - creation_timestamp: Unix timestamp
+            Dict: Artifact creation results. Format depends on persist parameter:
+                - persist=True: includes artifact_id, merkle_root, merkle_proof (stateful mode)
+                - persist=False: includes full artifact_data for embedding in tokens (stateless mode)
         Raises:
             ValueError: If not in 'create' mode
         """
         if self.mode != "create":
             raise ValueError("TSP must be in 'create' mode")
 
-        print("Starting TSP Protocol...")
-        # 1. Generate prime number (this calls set_artifact_index which recreates genesis)
+        print(f"Starting TSP Protocol (persist={persist})...")
+
+        # 1. Generate prime number
         print("Mining cryptographic prime...")
         pow_prime = self.prime.generate_prime()
-        print(
-            f"Prime generated: {str(pow_prime)[:20]}... ({self.protocol.PRIME_BITS} bits)"
-        )
-        # 2. Genesis commitment is already created/updated in set_artifact_index
+        print(f"Prime generated: {str(pow_prime)[:20]}... ({self.protocol.PRIME_BITS} bits)")
+
+        # 2. Genesis commitment is already created
         genesis_hash = self.protocol.GENESIS_COMMIT_HASH.hex()
         print(f"Genesis hash: {genesis_hash[:16]}...")
+
         # 3. Create seed commit
         hash_seed = hashlib.sha3_256(self.protocol.seed).hexdigest()
         print(f"Seed commit created: {hash_seed[:16]}...")
-        # 4. Commit to storage
-        print("Committing artifact to permanent storage...")
-        commit_result = self.commit()
-        # 5. Return results
-        result = {
-            "success": True,
-            "artifact_id": commit_result["merkle_index"],
-            "seed_hash": hash_seed,
-            "prime": pow_prime,
-            "genesis_hash": genesis_hash,
-            "config_hash": self.protocol.config_hash().hex(),
-            "combined_hash": self.protocol.combined_hash.hex(),
-            "rarity": self.protocol.RARITY_THRESHOLD,
-            "merkle_root": commit_result["merkle_root"],
-            "merkle_proof": commit_result["merkle_proof"],
-            "is_personalized": bool(self.protocol.OWNERSHIP_FLAGS & 0b0010),
-            "creation_timestamp": int.from_bytes(self.protocol.seed[24:32], "big"),
-        }
-        print(f"\nTSP Protocol completed successfully!")
-        print(f"Artifact ID: {result['artifact_id']}")
-        print(f"Artifact Index: {self.protocol.ARTIFACT_INDEX}")
-        print(f"Config Hash: {result['config_hash']}")
-        print(f"Rarity: {result['rarity']}")
+
+        if persist:
+            # STATEFUL MODE: Save to commits.json with Merkle tree
+            print("Committing artifact to permanent storage...")
+            commit_result = self.commit()
+
+            result = {
+                "success": True,
+                "artifact_id": commit_result["merkle_index"],
+                "seed_hash": hash_seed,
+                "prime": pow_prime,
+                "genesis_hash": genesis_hash,
+                "config_hash": self.protocol.config_hash().hex(),
+                "combined_hash": self.protocol.combined_hash.hex(),
+                "rarity": self.protocol.RARITY_THRESHOLD,
+                "merkle_root": commit_result["merkle_root"],
+                "merkle_proof": commit_result["merkle_proof"],
+                "is_personalized": bool(self.protocol.OWNERSHIP_FLAGS & 0b0010),
+                "creation_timestamp": int.from_bytes(self.protocol.seed[24:32], "big"),
+                "mode": "stateful"
+            }
+
+            print(f"TSP Protocol completed (stateful)!")
+            print(f"Artifact ID: {result['artifact_id']}")
+
+        else:
+            # STATELESS MODE: Return full artifact data without storage
+            print("Creating stateless artifact data...")
+            artifact_data = self._create_artifact_data()
+
+            result = {
+                "success": True,
+                "artifact_data": artifact_data,  # Full data for token embedding
+                "seed_hash": hash_seed,
+                "prime": pow_prime,
+                "genesis_hash": genesis_hash,
+                "config_hash": self.protocol.config_hash().hex(),
+                "combined_hash": self.protocol.combined_hash.hex(),
+                "rarity": self.protocol.RARITY_THRESHOLD,
+                "is_personalized": bool(self.protocol.OWNERSHIP_FLAGS & 0b0010),
+                "creation_timestamp": int.from_bytes(self.protocol.seed[24:32], "big"),
+                "mode": "stateless"
+            }
+
+            print(f"TSP Protocol completed (stateless)!")
+            print(f"Artifact ready for token embedding")
+
+        print(f"Config Hash: {self.protocol.config_hash().hex()}")
+        print(f"Rarity: {self.protocol.RARITY_THRESHOLD}")
         return result
 
-    def restore_artifact(
-        self, artifact_identifier: Union[int, str]
-    ) -> TSPProtocolSession:
-        """
-        Restore artifact from permanent storage.
-        Reconstructs full artifact state from minimal stored data,
-        enabling verification without original creation context.
-        Args:
-            artifact_identifier: Artifact ID (int) or config hash (str)
-        Returns:
-            TSPProtocolSession: Restored artifact session
-        Raises:
-            FileNotFoundError: If commits.json not found
-            ValueError: If artifact not found
-        """
-        commit_data = self._load_artifact_data(artifact_identifier)
-        print(f"Restoring artifact:")
-        print(f"Artifact Index: {commit_data['artifact_index']}")
-        print(f"Expected Genesis: {commit_data['genesis_hash']}")
-        print(f"Seed: {commit_data['seed'][:32]}...")
-        # Debug: Check if we're using the correct artifact_index
-        expected_index = commit_data.get("artifact_index", 0)
-        session = TSPProtocolSession(
-            controller=Controller(commit_data["model"]),
-            signature_obj=self.signature,
-            signature_public_key_bytes=bytes.fromhex(commit_data["public_key"]),
-            seed=bytes.fromhex(commit_data["seed"]),
-            signature=bytes.fromhex(commit_data["signature"]),
-            artifact_index=expected_index,  # Use stored artifact_index
-            expected_combined_hash=bytes.fromhex(commit_data["combined_hash"]),
-            expected_config_hash=bytes.fromhex(commit_data["config_hash"]),
-            expected_genesis_hash=bytes.fromhex(commit_data["genesis_hash"]),
-            designated_owner_hash=(
-                bytes.fromhex(commit_data["designated_owner"])
-                if commit_data.get("designated_owner")
-                else None
-            ),
-            prime=int(commit_data["prime"]) if commit_data.get("prime") else None,
-            stored_commit_data=commit_data,
-        )
-        print(f"Computed Genesis: {session.protocol.GENESIS_COMMIT_HASH.hex()}")
-        return session
-
     def verify_artifact(
+        self,
+        artifact_identifier: Union[int, str, Dict],
+        verify_merkle: bool = True,
+        verify_chain: bool = False,
+        debug_config_hash: bool = False,
+    ) -> Dict:
+        """
+        Perform comprehensive artifact verification with auto-mode detection.
+
+        Args:
+            artifact_identifier: Can be:
+                - int/str: Artifact ID or config hash (stateful mode via commits.json)
+                - Dict: Full artifact data (stateless mode)
+            verify_merkle: Whether to verify Merkle tree inclusion
+            verify_chain: Whether to verify derivation chain
+            debug_config_hash: Print detailed config hash materials
+
+        Returns:
+            Dict: Verification results with 'all_valid' summary
+        """
+        # Auto-detect mode based on input type
+        if isinstance(artifact_identifier, dict):
+            # Stateless mode: verify from provided data
+            print("Auto-detected: Stateless verification mode")
+            return self.verify_artifact_from_data(
+                artifact_identifier,
+                verify_merkle=verify_merkle
+            )
+        else:
+            # Stateful mode: verify via commits.json lookup
+            print("Auto-detected: Stateful verification mode")
+            return self._verify_artifact_stateful(
+                artifact_identifier,
+                verify_merkle=verify_merkle,
+                verify_chain=verify_chain,
+                debug_config_hash=debug_config_hash
+            )
+
+    def verify_my_ownership(
+        self,
+        artifact_identifier: Union[int, str, Dict],
+        verify_merkle: bool = True
+    ) -> Dict:
+        """
+        Verify ownership with auto-mode detection.
+
+        Args:
+            artifact_identifier: Can be:
+                - int/str: Artifact ID or config hash (stateful mode)
+                - Dict: Full artifact data (stateless mode)
+            verify_merkle: Whether to verify Merkle inclusion
+
+        Returns:
+            Dict: Ownership verification results
+        """
+        # Auto-detect mode based on input type
+        if isinstance(artifact_identifier, dict):
+            # Stateless mode
+            print("Auto-detected: Stateless ownership verification")
+            return self.verify_my_ownership_from_data(artifact_identifier)
+        else:
+            # Stateful mode
+            print("Auto-detected: Stateful ownership verification")
+            return self._verify_my_ownership_stateful(
+                artifact_identifier,
+                verify_merkle=verify_merkle
+            )
+
+    def verify_artifact_from_data(self, artifact_data: Dict, verify_merkle: bool = False) -> Dict:
+        """
+        Verify artifact directly from provided data (stateless verification).
+
+        This method enables true stateless verification without requiring commits.json lookup.
+        Perfect for WEB_AUTH tokens where all verification data is embedded in the token.
+
+        Args:
+            artifact_data: Complete artifact data (from stateless create_artifact or token)
+            verify_merkle: Whether to verify Merkle inclusion (usually False for stateless)
+
+        Returns:
+            Dict: Comprehensive verification results including:
+                - all_valid: Overall verification status
+                - pow_valid, signature_valid, genesis_valid, config_hash_valid, prime_valid
+                - artifact metadata and timing info
+        """
+        print(f"Stateless artifact verification...")
+
+        try:
+            # Create controller and signature handler for verification
+            controller = Controller(artifact_data["model"])
+            creator_pubkey = bytes.fromhex(artifact_data["public_key"])
+            creator_signature = SignatureHandler.create_verify_only(creator_pubkey)
+
+            # Create TSPProtocolSession for verification
+            session = TSPProtocolSession(
+                controller=controller,
+                signature_obj=creator_signature,
+                signature_public_key_bytes=creator_pubkey,
+                seed=bytes.fromhex(artifact_data["seed"]),
+                signature=bytes.fromhex(artifact_data["signature"]),
+                artifact_index=artifact_data.get("artifact_index", 0),
+                stored_commit_data=artifact_data,
+                expected_combined_hash=bytes.fromhex(artifact_data["combined_hash"]),
+                expected_genesis_hash=bytes.fromhex(artifact_data["genesis_hash"]),
+                expected_config_hash=bytes.fromhex(artifact_data["config_hash"]),
+                designated_owner_hash=(
+                    bytes.fromhex(artifact_data["designated_owner"])
+                    if artifact_data.get("designated_owner")
+                    else None
+                ),
+                prime=int(artifact_data["prime"]) if artifact_data.get("prime") else None,
+            )
+
+            # Perform comprehensive verification
+            verification_results = session.verify_all(
+                expected_config_hash=bytes.fromhex(artifact_data["config_hash"])
+            )
+
+            # Add artifact metadata
+            verification_results.update({
+                "artifact_index": artifact_data.get("artifact_index", 0),
+                "config_hash": artifact_data["config_hash"],
+                "creation_timestamp": artifact_data.get("creation_timestamp"),
+                "rarity": artifact_data.get("rarity_threshold"),
+                "is_personalized": artifact_data.get("is_personalized", False),
+                "verification_mode": "stateless"
+            })
+
+            # Merkle verification (usually skipped for stateless tokens)
+            if verify_merkle and artifact_data.get("merkle_proof"):
+                merkle_valid = self._verify_merkle_inclusion_static(artifact_data)
+                verification_results["merkle_valid"] = merkle_valid
+            else:
+                verification_results["merkle_valid"] = True  # N/A for stateless
+
+            print(f"Stateless verification completed!")
+            print(f"Overall Valid: {verification_results['all_valid']}")
+            print(f"PoW Valid: {verification_results['pow_valid']}")
+            print(f"Signature Valid: {verification_results['signature_valid']}")
+
+            return verification_results
+
+        except Exception as e:
+            print(f"Stateless verification error: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "all_valid": False,
+                "verification_mode": "stateless"
+            }
+
+    def verify_my_ownership_from_data(self, artifact_data: Dict) -> Dict:
+        """
+        Verify ownership of artifact using current TSP credentials (stateless mode).
+
+        Args:
+            artifact_data: Complete artifact data
+
+        Returns:
+            Dict: Ownership verification results
+        """
+        # First verify artifact integrity
+        verification = self.verify_artifact_from_data(artifact_data, verify_merkle=False)
+
+        if not verification["all_valid"]:
+            return {
+                "artifact_valid": False,
+                "ownership_valid": False,
+                "all_checks_valid": False,
+                "error": "Artifact verification failed",
+                "verification_mode": "stateless"
+            }
+
+        # Check ownership
+        my_pubkey = self.signature.get_public_bytes()
+        my_hash = hashlib.sha3_256(my_pubkey).digest()
+
+        designated_owner = artifact_data.get("designated_owner")
+        if designated_owner:
+            ownership_valid = (my_hash == bytes.fromhex(designated_owner))
+        else:
+            ownership_valid = True  # No ownership restriction
+
+        return {
+            "artifact_valid": True,
+            "ownership_valid": ownership_valid,
+            "my_pubkey": my_pubkey.hex(),
+            "creator_pubkey": artifact_data["public_key"],
+            "is_personalized": artifact_data.get("is_personalized", False),
+            "all_checks_valid": ownership_valid,
+            "verification_mode": "stateless"
+        }
+
+    def _verify_artifact_stateful(
         self,
         artifact_identifier: Union[int, str],
         verify_merkle: bool = True,
@@ -503,16 +450,7 @@ class TSP:
         debug_config_hash: bool = False,
     ) -> Dict:
         """
-        Perform comprehensive artifact verification.
-        Validates all cryptographic proofs including PoW, signatures,
-        genesis commitment, and optional Merkle inclusion.
-        Args:
-            artifact_identifier: Artifact ID or config hash
-            verify_merkle: Whether to verify Merkle tree inclusion
-            verify_chain: Whether to verify derivation chain
-            debug_config_hash: Print detailed config hash materials
-        Returns:
-            Dict: Verification results with 'all_valid' summary
+        Perform comprehensive artifact verification via commits.json (stateful mode).
         """
         try:
             # 1. Load commit data
@@ -561,6 +499,7 @@ class TSP:
                     "creation_timestamp": commit_data.get("creation_timestamp"),
                     "rarity": commit_data.get("rarity_threshold"),
                     "is_personalized": commit_data.get("is_personalized", False),
+                    "verification_mode": "stateful"
                 }
             )
             print(f"Artifact verification completed!")
@@ -575,11 +514,203 @@ class TSP:
                 "success": False,
                 "error": str(e),
                 "all_valid": False,
+                "verification_mode": "stateful"
             }
+
+    def _verify_my_ownership_stateful(
+        self,
+        artifact_identifier: Union[int, str],
+        verify_merkle: bool = True
+    ) -> Dict:
+        """
+        Verify ownership of artifact using current TSP credentials (stateful mode).
+        """
+        if self.mode not in ["verify", "restore"]:
+            self._init_verify_mode()
+
+        # 1. Load artifact data
+        commit_data = self._load_artifact_data(artifact_identifier)
+        # 2. Get creator's public key from commits.json
+        creator_pubkey = bytes.fromhex(commit_data["public_key"])
+        # 3. Create verify-only SignatureHandler for creator
+        creator_signature = SignatureHandler.create_verify_only(creator_pubkey)
+        # 4. Verify artifact as creator
+        session = TSPProtocolSession(
+            controller=Controller(commit_data["model"]),
+            signature_obj=creator_signature,
+            signature_public_key_bytes=creator_pubkey,
+            seed=bytes.fromhex(commit_data["seed"]),
+            signature=bytes.fromhex(commit_data["signature"]),
+            artifact_index=commit_data.get("artifact_index", 0),
+            stored_commit_data=commit_data,
+            expected_combined_hash=bytes.fromhex(commit_data["combined_hash"]),
+            expected_genesis_hash=bytes.fromhex(commit_data["genesis_hash"]),
+            expected_config_hash=bytes.fromhex(commit_data["config_hash"]),
+            designated_owner_hash=(
+                bytes.fromhex(commit_data["designated_owner"])
+                if commit_data.get("designated_owner")
+                else None
+            ),
+            prime=int(commit_data["prime"]) if commit_data.get("prime") else None,
+        )
+
+        # 5. Check ownership by current instance(self.signature)
+        my_pubkey = self.signature.get_public_bytes()
+        my_hash = hashlib.sha3_256(my_pubkey).digest()
+        ownership_valid = session.verify_ownership(my_pubkey)
+
+        # 6. Comprehensive artifact validation
+        artifact_results = session.verify_all()
+
+        # 7. Merkle tree verification
+        merkle_valid = True
+        if verify_merkle:
+            self.debug_merkle_tree_construction(commit_data)
+            merkle_valid = self._verify_merkle_inclusion(commit_data)
+            print(f"Merkle verification: {'Valid' if merkle_valid else 'Invalid'}")
+
+        self.deep_pow_diagnostic(session, commit_data)
+        return {
+            "artifact_valid": artifact_results["all_valid"],
+            "ownership_valid": ownership_valid,
+            "merkle_valid": merkle_valid,
+            "my_pubkey": my_pubkey.hex(),
+            "creator_pubkey": creator_pubkey.hex(),
+            "artifact_index": commit_data.get("artifact_index"),
+            "creation_timestamp": commit_data.get("creation_timestamp"),
+            "rarity": commit_data.get("rarity_threshold"),
+            "is_personalized": commit_data.get("is_personalized", False),
+            "pow_valid": artifact_results.get("pow_valid", False),
+            "signature_valid": artifact_results["signature_valid"],
+            "genesis_valid": artifact_results["genesis_valid"],
+            "config_hash_valid": artifact_results["config_hash_valid"],
+            "prime_valid": artifact_results.get("prime_valid", True),
+            "all_checks_valid": (
+                artifact_results["all_valid"]
+                and ownership_valid
+                and merkle_valid
+            ),
+            "verification_mode": "stateful"
+        }
+
+    def _create_artifact_data(self) -> Dict:
+        """
+        Create complete artifact data dictionary for stateless mode.
+
+        Returns:
+            Dict: All data needed for stateless verification
+        """
+        prime_bytes = self.protocol.PRIME.to_bytes(
+            (self.protocol.PRIME.bit_length() + 7) // 8, "big"
+        )
+        prime_hash = hashlib.sha3_256(prime_bytes).hexdigest()
+        seed_commit = hashlib.sha3_256(self.protocol.seed).hexdigest()
+
+        return {
+            # Core identity
+            "algo_version": self.controller.get_params()["ALGO_VERSION"],
+            "model": self.controller.model,
+            "artifact_index": self.protocol.ARTIFACT_INDEX,
+            "timestamp": int(time.time()),
+
+            # Cryptographic foundation
+            "seed": self.protocol.seed.hex(),
+            "seed_commit": seed_commit,
+            "public_key": self.signature.get_public_bytes().hex(),
+            "signature": self.protocol.SIGNATURE.hex(),
+
+            # Hash integrity
+            "config_hash": self.protocol.config_hash().hex(),
+            "combined_hash": self.protocol.combined_hash.hex(),
+            "genesis_hash": self.protocol.GENESIS_COMMIT_HASH.hex(),
+            "genesis_signature": self.protocol.GENESIS_SIGNATURE.hex(),
+
+            # Ownership & personalization
+            "designated_owner": (
+                self.protocol.DESIGNATED_OWNER_HASH.hex()
+                if self.protocol.DESIGNATED_OWNER_HASH
+                else None
+            ),
+            "ownership_flags": self.protocol.OWNERSHIP_FLAGS,
+            "is_personalized": bool(self.protocol.OWNERSHIP_FLAGS & 0b0010),
+
+            # Prime & cryptographic proof
+            "prime": str(self.protocol.PRIME),
+            "prime_hash": prime_hash,
+            "prime_nonce": self.protocol.PRIME_NONCE,
+            "prime_bits": self.protocol.PRIME_BITS,
+
+            # Proof of work
+            "pow_difficulty": self.protocol.POW_DIFFICULTY,
+            "base_pow_difficulty": self.controller.get_params()["BASE_POW_DIFFICULTY"],
+
+            # Rarity & game mechanics
+            "rarity_threshold": self.protocol.RARITY_THRESHOLD,
+            "total_bytes": self.protocol.TOTAL_BYTES,
+            "target_bytes": self.protocol.TARGET_BYTES,
+            "target_bytes_end": self.protocol.TARGET_BYTES_END,
+            "target_interval": self.protocol.TARGET_INTERVAL,
+            "max_offset": self.protocol.MAX_OFFSET,
+
+            # Argon2 parameters
+            "memory_cost": self.controller.get_params()["MEMORY_COST"],
+            "time_cost": self.controller.get_params()["TIME_COST"],
+            "parallelism": self.controller.get_params()["PARALLELISM"],
+            "hash_len": self.controller.get_params()["HASH_LEN"],
+            "salt": self.protocol.per_instance_salt.hex(),
+
+            # Readable metadata
+            "genesis_record": self.protocol.genesis_record,
+            "creation_timestamp": int.from_bytes(self.protocol.seed[24:32], "big"),
+        }
+
+    def restore_artifact(
+        self, artifact_identifier: Union[int, str]
+    ) -> TSPProtocolSession:
+        """
+        Restore artifact from permanent storage.
+        Reconstructs full artifact state from minimal stored data,
+        enabling verification without original creation context.
+        Args:
+            artifact_identifier: Artifact ID (int) or config hash (str)
+        Returns:
+            TSPProtocolSession: Restored artifact session
+        Raises:
+            FileNotFoundError: If commits.json not found
+            ValueError: If artifact not found
+        """
+        commit_data = self._load_artifact_data(artifact_identifier)
+        print(f"Restoring artifact:")
+        print(f"Artifact Index: {commit_data['artifact_index']}")
+        print(f"Expected Genesis: {commit_data['genesis_hash']}")
+        print(f"Seed: {commit_data['seed'][:32]}...")
+        # Debug: Check if we're using the correct artifact_index
+        expected_index = commit_data.get("artifact_index", 0)
+        session = TSPProtocolSession(
+            controller=Controller(commit_data["model"]),
+            signature_obj=self.signature,
+            signature_public_key_bytes=bytes.fromhex(commit_data["public_key"]),
+            seed=bytes.fromhex(commit_data["seed"]),
+            signature=bytes.fromhex(commit_data["signature"]),
+            artifact_index=expected_index,  # Use stored artifact_index
+            expected_combined_hash=bytes.fromhex(commit_data["combined_hash"]),
+            expected_config_hash=bytes.fromhex(commit_data["config_hash"]),
+            expected_genesis_hash=bytes.fromhex(commit_data["genesis_hash"]),
+            designated_owner_hash=(
+                bytes.fromhex(commit_data["designated_owner"])
+                if commit_data.get("designated_owner")
+                else None
+            ),
+            prime=int(commit_data["prime"]) if commit_data.get("prime") else None,
+            stored_commit_data=commit_data,
+        )
+        print(f"Computed Genesis: {session.protocol.GENESIS_COMMIT_HASH.hex()}")
+        return session
 
     @staticmethod
     def list_artifacts(
-        filter_owner: Optional[str] = None, filter_creator: Optional[str] = None
+        filter_owner: Optional[str] = None,
+        filter_creator: Optional[str] = None
     ) -> List[Dict]:
         """
         List all artifacts with optional filtering.
@@ -1037,6 +1168,132 @@ class TSP:
                 print("Stored proof:")
                 for i, p in enumerate(stored_proof):
                     print(f"  {i}: {p['hash']} (left: {p['left']})")
+
+    @staticmethod
+    def deep_pow_diagnostic(session, commit_data):
+        """
+        Perform detailed proof-of-work diagnostic for debugging.
+        Runs multiple validation tests to identify PoW discrepancies
+        including manual verification, stored data comparison, and
+        difficulty range testing.
+        Args:
+            session: TSPProtocolSession instance
+            commit_data: Stored commit data dictionary
+        Returns:
+            bool: PoW validation result
+        """
+        seed = session.protocol.seed
+        difficulty = session.protocol.POW_DIFFICULTY
+        params = session.cfg.get_params()
+        print(f"\nDEEP PoW DIAGNOSTIC:")
+        print(f"Seed: {seed.hex()}")
+        print(f"Difficulty: {difficulty}")
+        print(f"TSP_POW constant: {params['TSP_POW']}")
+
+        def manual_pow_check(seed_bytes, diff, debug_prefix=""):
+            """Manual step-by-step PoW check"""
+            print(f"{debug_prefix} Manual PoW check:")
+            print(f"{debug_prefix} Input seed: {seed_bytes.hex()}")
+            print(f"{debug_prefix} Input difficulty: {diff}")
+            # Difficulty params
+            lb = diff // 8
+            rb = diff % 8
+            mask = (0xFF << (8 - rb)) if rb else 0
+            print(f"   {debug_prefix}  lb={lb}, rb={rb}, mask={mask:02x}")
+            # Making pow_data
+            tsp_pow = params["TSP_POW"]
+            difficulty_bytes = diff.to_bytes(2, "big")
+            pow_data = tsp_pow + seed_bytes + difficulty_bytes
+            print(f"{debug_prefix}  TSP_POW: {tsp_pow}")
+            print(f"{debug_prefix}  difficulty_bytes: {difficulty_bytes.hex()}")
+            print(f"{debug_prefix}  pow_data: {pow_data.hex()}")
+            # Triple SHA3-256
+            h1 = hashlib.sha3_256(pow_data).digest()
+            h2 = hashlib.sha3_256(h1).digest()
+            result = hashlib.sha3_256(h2).digest()
+            print(f"{debug_prefix}  hash1: {h1.hex()}")
+            print(f"{debug_prefix}  hash2: {h2.hex()}")
+            print(f"{debug_prefix}  final: {result.hex()}")
+            # Check for leading zeros
+            violation = 0
+            print(f"{debug_prefix}  Checking leading zeros:")
+            for i in range(lb):
+                byte_val = result[i]
+                violation |= byte_val
+                print(
+                    f"{debug_prefix}    byte[{i}]: {byte_val:02x} (violation: {violation})"
+                )
+            if rb > 0 and lb < len(result):
+                byte_val = result[lb]
+                masked = byte_val & mask
+                violation |= masked
+                print(
+                    f"{debug_prefix}    byte[{lb}] & mask: {byte_val:02x} & {mask:02x} = {masked:02x} (violation: {violation})"
+                )
+            is_valid = violation == 0
+            print(f"{debug_prefix} Final violation: {violation}")
+            print(f"{debug_prefix} Result: {is_valid}")
+            return is_valid
+
+        # Comparative tests
+        try:
+            print(f"\nTEST 1: Session protocol _check_pow")
+            session_result = session.protocol._check_pow(seed, difficulty)
+            print(f"Session result: {session_result}")
+            print(f"\nTEST 2: Manual implementation")
+            manual_result = manual_pow_check(seed, difficulty, "MANUAL: ")
+            print(f"\nTEST 3: Stored data comparison")
+            stored_seed = bytes.fromhex(commit_data["seed"])
+            stored_difficulty = commit_data["pow_difficulty"]
+            print(f"Stored seed == protocol seed: {stored_seed == seed}")
+            print(
+                f"Stored difficulty == protocol difficulty: {stored_difficulty == difficulty}"
+            )
+            if stored_seed == seed and stored_difficulty == difficulty:
+                print(f"✅ Stored data matches protocol data")
+            else:
+                print(f"❌ Stored data MISMATCH!")
+                print(f"Stored seed: {stored_seed.hex()}")
+                print(f"Protocol seed: {seed.hex()}")
+            print(f"\nTEST 4: Manual check on stored data")
+            manual_stored = manual_pow_check(stored_seed, stored_difficulty, "STORED: ")
+            print(f"\nTEST 5: Testing different difficulties")
+            for test_diff in [1, 2, 3, 4]:
+                try:
+                    test_session = session.protocol._check_pow(seed, test_diff)
+                    test_manual = manual_pow_check(
+                        seed, test_diff, f"DIFF{test_diff}: "
+                    )
+                    match = test_session == test_manual
+                    print(
+                        f"Difficulty {test_diff}: session={test_session}, manual={test_manual}, match={match}"
+                    )
+                except Exception as e:
+                    print(f"Difficulty {test_diff}: ERROR = {e}")
+            # Финальные результаты
+            print(f"\nSUMMARY:")
+            print(f"Session PoW result: {session_result}")
+            print(f"Manual PoW result: {manual_result}")
+            print(f"Results match: {session_result == manual_result}")
+            print(
+                f"Overall diagnosis: {'CONSISTENT' if session_result == manual_result else 'INCONSISTENT'}"
+            )
+            return session_result
+        except Exception as e:
+            print(f"   💥 DIAGNOSTIC ERROR: {e}")
+            traceback.print_exc()
+            return False
+
+    def verify_pow(self) -> bool:
+        """
+        Verify proof-of-work for current protocol artifact.
+        Returns:
+            bool: True if PoW constraints satisfied
+        """
+        # Use protocol.seed instead provided_seed
+        return self.protocol._check_pow(
+            self.protocol.seed, self.protocol.POW_DIFFICULTY
+        )
 
 
 if __name__ == "__main__":

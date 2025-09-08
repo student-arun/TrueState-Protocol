@@ -1,20 +1,27 @@
 # TSP - True State Protocol
 **Copyright © 2025 Vladislav Dunaev**
 
-A cryptographic protocol for creating mathematically unique, self-verifying digital artifacts with built-in ownership chains and stateless verification.
+> **Updated September 2025**: Enhanced with dual-mode architecture - stateful and stateless operation modes for maximum flexibility across different use cases.
+
+A cryptographic protocol for creating mathematically unique, self-verifying digital artifacts with built-in ownership chains and dual-mode verification.
 
 ## Overview
 
-TSP (True State Protocol) creates digital artifacts that are mathematically impossible to forge or duplicate. 
-Each artifact contains cryptographic proofs of authenticity, ownership, and rarity that can be verified independently without requiring external databases or network connectivity.
+TSP (True State Protocol) creates digital artifacts that are mathematically impossible to forge or duplicate. Each artifact contains cryptographic proofs of authenticity, ownership, and rarity that can be verified independently without requiring external databases or network connectivity.
+
+**NEW: Dual-Mode Architecture**
+- **Stateful Mode**: Traditional permanent storage with commits.json for licenses, certificates, and NFTs
+- **Stateless Mode**: Self-contained tokens with embedded verification data for web authentication and API access
+- **Auto-Detection**: Seamless API that automatically handles both modes
 
 ### Key Features
 
 - **Mathematical Uniqueness**: Artifacts are backed by cryptographic prime generation with proof-of-work validation
-- **Stateless Verification**: Complete verification without databases, networks, or central authorities
+- **Dual-Mode Verification**: Choose between stateful (permanent audit trail) or stateless (zero storage) operation
+- **Auto-Detection API**: One interface seamlessly handles both stateful and stateless artifacts
 - **Ownership Chains**: Built-in designated ownership with transferable proofs
 - **Graduated Rarity**: Configurable complexity levels for different use cases
-- **Self-Contained Proofs**: All verification data embedded in the artifact
+- **Self-Contained Proofs**: All verification data embedded in the artifact (stateless mode)
 - **Offline Capability**: Works without internet connectivity
 - **Enterprise Security**: SHA3-256, Argon2, HMAC-based cryptography
 
@@ -28,7 +35,7 @@ TSP consists of 8 core components:
 - **Prime**: Cryptographic prime number generation with validation
 - **DeterministicRNG**: Cryptographically secure pseudo-random number generator
 - **MerkleTree**: Batch verification and tamper-proof commitment chains
-- **TSP**: Main interface for creating and verifying artifacts
+- **TSP**: Main interface for creating and verifying artifacts with dual-mode support
 - **TSPHelper**: Utility class for simplified operations
 
 ## Installation
@@ -41,7 +48,7 @@ pip install cryptography argon2-cffi portalocker
 
 - `cryptography`: For digital signatures and key management
 - `argon2-cffi`: Memory-hard proof-of-work functions
-- `portalocker`: Atomic file operations for commit storage
+- `portalocker`: Atomic file operations for commit storage (stateful mode only)
 
 ## Quick Start
 
@@ -51,14 +58,14 @@ pip install cryptography argon2-cffi portalocker
 from source.signature import SignatureHandler
 
 # Generate key pair
-signature = SignatureHandler.generate_keys(
+SignatureHandler.generate_keys(
     private_key_path="private.pem",
     public_key_path="public.pem", 
     password=b"your_secure_password"
 )
 ```
 
-### Create an Artifact
+### Create Artifacts (Dual-Mode)
 
 ```python
 from tsp import TSP
@@ -72,13 +79,18 @@ tsp = TSP(
     mode="create"
 )
 
-# Create artifact
-result = tsp.create_artifact()
-print(f"Artifact ID: {result['artifact_id']}")
-print(f"Config Hash: {result['config_hash']}")
+# Stateless Mode: Self-contained tokens (web auth, API tokens)
+stateless_result = tsp.create_artifact(persist=False)
+print(f"Stateless Token: {stateless_result['mode']}")
+print(f"Embedded Data: {len(str(stateless_result['artifact_data']))} bytes")
+
+# Stateful Mode: Permanent storage (licenses, certificates)
+stateful_result = tsp.create_artifact(persist=True)
+print(f"Artifact ID: {stateful_result['artifact_id']}")
+print(f"Merkle Root: {stateful_result['merkle_root']}")
 ```
 
-### Verify an Artifact
+### Verify Artifacts (Auto-Detection)
 
 ```python
 # Initialize TSP for verification
@@ -89,117 +101,27 @@ tsp_verify = TSP(
     mode="verify"
 )
 
-# Verify artifact
-verification = tsp_verify.verify_artifact(artifact_id)
-print(f"Valid: {verification['all_valid']}")
+# Auto-detection: Pass different types for seamless verification
+# Stateful verification (artifact ID or config hash)
+verification1 = tsp_verify.verify_artifact(stateful_result['artifact_id'])
+print(f"Stateful Valid: {verification1['all_valid']} ({verification1['verification_mode']})")
+
+# Stateless verification (embedded artifact data)
+verification2 = tsp_verify.verify_artifact(stateless_result['artifact_data'])
+print(f"Stateless Valid: {verification2['all_valid']} ({verification2['verification_mode']})")
 ```
 
 ## Examples
 
-### Ownership Chains
+### Web Authentication Without Sessions
 
-```python
-from tsp_helper import TSPHelper
-
-helper = TSPHelper()
-
-# Alice creates artifact for Bob
-tsp_alice = helper.create_tsp("alice", designated_owner="bob")
-artifact = tsp_alice.create_artifact()
-
-# Bob verifies ownership
-tsp_bob = helper.create_tsp("bob", mode="verify")
-ownership = tsp_bob.verify_my_ownership(artifact['artifact_id'])
-print(f"Bob owns artifact: {ownership['ownership_valid']}")
-
-# Bob transfers to Charlie
-tsp_bob_create = helper.create_tsp("bob", designated_owner="charlie")
-new_artifact = tsp_bob_create.create_artifact()
-```
-
-### Digital Certificates
-
-Create tamper-proof educational or professional certificates:
-
-```python
-from tsp_helper import TSPHelper
-
-helper = TSPHelper()
-
-# University creates diploma for graduate
-tsp_university = helper.create_tsp(
-    "university", 
-    model="CERTIFICATE",  # Higher computational cost
-    designated_owner="graduate"
-)
-
-print("Creating digital diploma certificate...")
-diploma = tsp_university.create_artifact()
-
-print(f"Certificate issued!")
-print(f"Certificate ID: {diploma['artifact_id']}")
-print(f"Rarity Level: {diploma['rarity']}")
-print(f"Computational Proof: {diploma['config_hash'][:16]}...")
-
-# Graduate verifies ownership
-tsp_graduate = helper.create_tsp("graduate", mode="verify")
-verification = tsp_graduate.verify_my_ownership(diploma['artifact_id'])
-
-print(f"Certificate authentic: {verification['artifact_valid']}")
-print(f"Graduate ownership: {verification['ownership_valid']}")
-print(f"All proofs valid: {verification['all_checks_valid']}")
-
-# Anyone can verify certificate authenticity
-tsp_employer = helper.create_tsp("employer", mode="verify")
-authenticity = tsp_employer.verify_artifact(diploma['artifact_id'])
-print(f"Certificate verified by employer: {authenticity['all_valid']}")
-```
-
-### Software Licensing
-
-Create unforgeable software licenses with built-in ownership:
-
-```python
-from tsp_helper import TSPHelper
-
-helper = TSPHelper()
-
-# Software vendor creates license for customer
-tsp_vendor = helper.create_tsp(
-    "software_vendor",
-    model="LICENSE",  # Medium computational cost
-    designated_owner="customer"
-)
-
-print("Generating software license...")
-license_artifact = tsp_vendor.create_artifact()
-
-print(f"License Key Generated!")
-print(f"License ID: {license_artifact['artifact_id']}")
-print(f"License Hash: {license_artifact['config_hash']}")
-print(f"License Rarity: {license_artifact['rarity']}")
-
-# Customer activates software with license
-tsp_customer = helper.create_tsp("customer", mode="verify")
-license_check = tsp_customer.verify_my_ownership(license_artifact['artifact_id'])
-
-if license_check['ownership_valid']:
-    print("✅ Software activated successfully!")
-    print(f"Licensed to: {license_check['creator_pubkey'][:16]}...")
-    print(f"Valid license: {license_check['all_checks_valid']}")
-else:
-    print("❌ Invalid or unauthorized license")
-
-# License cannot be pirated - cryptographic proof required
-```
-
-### Web Authentication Server
-
-Complete stateless authentication using TSP artifacts as session tokens:
+TSP eliminates server-side session storage entirely with embedded verification:
 
 ```python
 from flask import Flask, request, jsonify
 from tsp import TSP
+import base64
+import json
 
 app = Flask(__name__)
 
@@ -208,24 +130,174 @@ def login():
     # Authenticate user credentials
     user = authenticate_user(username, password)
     
-    # Create TSP artifact as session token
-    tsp = TSP(keys..., model="WEB_AUTH")
-    artifact = tsp.create_artifact()
+    # Create stateless TSP artifact as session token
+    tsp = TSP(
+        private_key_path="server.pem",
+        public_key_path="server_public.pem", 
+        key_password=b"server_password",
+        model="WEB_AUTH"
+    )
     
-    # Return base64-encoded token
-    return jsonify({"token": create_session_token(user, artifact)})
+    # Generate stateless token (persist=False)
+    token_result = tsp.create_artifact(persist=False)
+    
+    # Create session metadata
+    session_data = {
+        "user_id": user.id,
+        "username": user.username,
+        "expires_at": int(time.time()) + 3600,  # 1 hour
+        "tsp_artifact": token_result["artifact_data"]  # Embedded verification
+    }
+    
+    # Base64 encode for HTTP transport
+    token = base64.b64encode(json.dumps(session_data).encode()).decode()
+    return jsonify({"token": token})
 
 @app.route("/api/protected")
-@require_tsp_auth  # Verifies TSP artifact
-def protected_endpoint():
-    return jsonify({"data": "secret information"})
+def protected():
+    # Extract token from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Missing token"}), 401
+    
+    token = auth_header[7:]  # Remove "Bearer "
+    
+    try:
+        # Decode session data
+        session_data = json.loads(base64.b64decode(token).decode())
+        
+        # Verify embedded TSP artifact (stateless verification)
+        tsp_verify = TSP(
+            private_key_path="server.pem",
+            public_key_path="server_public.pem",
+            key_password=b"server_password",
+            mode="verify"
+        )
+        
+        # Auto-detection: Pass artifact_data for stateless verification
+        verification = tsp_verify.verify_artifact(session_data["tsp_artifact"])
+        
+        if verification['all_valid'] and session_data['expires_at'] > int(time.time()):
+            return jsonify({
+                "data": "secret information",
+                "user": session_data['username'],
+                "verification_mode": verification['verification_mode']  # "stateless"
+            })
+        else:
+            return jsonify({"error": "invalid token"}), 401
+            
+    except Exception as e:
+        return jsonify({"error": "token verification failed"}), 401
 ```
 
-The server includes a modern web interface with:
-- Proof-of-work token generation
-- Real-time authentication status
-- Protected API testing
-- Demo accounts (alice/alice123, bob/bob456, etc.)
+**Benefits of Stateless Web Auth:**
+- No server-side session storage required
+- Unlimited horizontal scaling without sticky sessions
+- Microservices can verify tokens independently
+- Perfect for containerized and serverless environments
+
+### Ownership Chains
+
+```python
+from tsp_helper import TSPHelper
+
+helper = TSPHelper()
+
+# Alice creates artifact for Bob (stateful mode for permanent record)
+tsp_alice = helper.create_tsp("alice", designated_owner="bob")
+artifact = tsp_alice.create_artifact(persist=True)
+
+# Bob verifies ownership
+tsp_bob = helper.create_tsp("bob", mode="verify")
+ownership = tsp_bob.verify_my_ownership(artifact['artifact_id'])
+print(f"Bob owns artifact: {ownership['ownership_valid']}")
+
+# Bob transfers to Charlie
+tsp_bob_create = helper.create_tsp("bob", designated_owner="charlie")
+new_artifact = tsp_bob_create.create_artifact(persist=True)
+```
+
+### Digital Certificates (Stateful)
+
+Create tamper-proof educational or professional certificates with permanent audit trail:
+
+```python
+from tsp_helper import TSPHelper
+
+helper = TSPHelper()
+
+# University creates diploma for graduate (stateful for permanent record)
+tsp_university = helper.create_tsp(
+    "university", 
+    model="CERTIFICATE",  # Higher computational cost
+    designated_owner="graduate"
+)
+
+print("Creating digital diploma certificate...")
+diploma = tsp_university.create_artifact(persist=True)  # Permanent storage
+
+print(f"Certificate issued!")
+print(f"Certificate ID: {diploma['artifact_id']}")
+print(f"Rarity Level: {diploma['rarity']}")
+print(f"Storage Mode: {diploma['mode']}")  # "stateful"
+
+# Graduate verifies ownership
+tsp_graduate = helper.create_tsp("graduate", mode="verify")
+verification = tsp_graduate.verify_my_ownership(diploma['artifact_id'])
+
+print(f"Certificate authentic: {verification['artifact_valid']}")
+print(f"Graduate ownership: {verification['ownership_valid']}")
+print(f"Verification mode: {verification['verification_mode']}")  # "stateful"
+
+# Anyone can verify certificate authenticity
+tsp_employer = helper.create_tsp("employer", mode="verify")
+authenticity = tsp_employer.verify_artifact(diploma['artifact_id'])
+print(f"Certificate verified by employer: {authenticity['all_valid']}")
+```
+
+### Software Licensing (Dual-Mode)
+
+Create both permanent licenses and temporary access tokens:
+
+```python
+from tsp_helper import TSPHelper
+
+helper = TSPHelper()
+
+# Enterprise License (Stateful - permanent audit trail)
+tsp_vendor = helper.create_tsp(
+    "software_vendor",
+    model="LICENSE",
+    designated_owner="enterprise_customer"
+)
+
+enterprise_license = tsp_vendor.create_artifact(persist=True)
+print(f"Enterprise License ID: {enterprise_license['artifact_id']}")
+print(f"Storage: {enterprise_license['mode']}")  # "stateful"
+
+# SaaS Access Token (Stateless - no server storage)
+tsp_saas = helper.create_tsp(
+    "saas_vendor", 
+    model="WEB_AUTH",
+    designated_owner="saas_customer"
+)
+
+access_token = tsp_saas.create_artifact(persist=False)
+print(f"SaaS Token Size: {len(str(access_token['artifact_data']))} bytes")
+print(f"Storage: {access_token['mode']}")  # "stateless"
+
+# Customer activates software
+tsp_customer = helper.create_tsp("enterprise_customer", mode="verify")
+
+# Verify enterprise license (by ID)
+license_check = tsp_customer.verify_my_ownership(enterprise_license['artifact_id'])
+
+# Verify SaaS token (by embedded data)
+token_check = tsp_customer.verify_my_ownership(access_token['artifact_data'])
+
+print(f"Enterprise license valid: {license_check['ownership_valid']}")
+print(f"SaaS token valid: {token_check['ownership_valid']}")
+```
 
 ### Utility Helper
 
@@ -246,16 +318,31 @@ user_hash = helper.get_user_hash("bob")
 helper.check_user_keys("alice")
 ```
 
-## Artifact Types
+## Artifact Types & Modes
 
-TSP supports multiple artifact types with different computational requirements:
+TSP supports multiple artifact types with different computational requirements and storage modes:
 
-| Model | Difficulty | Memory Cost | Use Case |
-|-------|------------|-------------|----------|
-| WEB_AUTH | 2 | 64 MB | Authentication tokens |
-| LICENSE | 4 | 512 MB | Software licenses |
-| CERTIFICATE | 8 | 512 MB | Digital certificates |
-| NFT | 16 | 4096 MB | High-value collectibles |
+| Model | Difficulty | Memory Cost | Primary Mode | Use Case |
+|-------|------------|-------------|--------------|----------|
+| WEB_AUTH | 2 | 64 MB | Stateless | Authentication tokens, API access |
+| LICENSE | 4 | 512 MB | Both | Software licenses, subscriptions |
+| CERTIFICATE | 8 | 512 MB | Stateful | Digital certificates, diplomas |
+| NFT | 16 | 4096 MB | Stateful | High-value collectibles, art |
+
+### Mode Selection Guide
+
+**Choose Stateful Mode (`persist=True`) for:**
+- Permanent credentials (diplomas, certifications)
+- High-value assets (NFTs, legal documents)  
+- Regulatory compliance (audit trails required)
+- Transfer/resale scenarios
+
+**Choose Stateless Mode (`persist=False`) for:**
+- Web authentication sessions
+- API access tokens
+- Microservices communication
+- High-throughput scenarios
+- Temporary credentials
 
 ## Core Concepts
 
@@ -267,16 +354,27 @@ Each artifact requires generating a cryptographic prime number that satisfies du
 
 This makes artifacts computationally expensive to create but instant to verify.
 
-### Stateless Verification
+### Dual-Mode Verification
 
-Artifacts contain all data needed for verification:
-- Cryptographic signatures
-- Proof-of-work evidence  
-- Genesis commitments
-- Merkle tree proofs
-- Configuration hashes
+**Stateful Mode:**
+- Artifacts stored in `commits.json` with Merkle tree proofs
+- Verification by artifact ID or config hash lookup
+- Full audit trail and uniqueness guarantees
+- Perfect for permanent assets
 
-No external databases or network calls required.
+**Stateless Mode:**
+- All verification data embedded in artifact data
+- No server-side storage required
+- Self-contained cryptographic proofs
+- Perfect for scalable web applications
+
+**Auto-Detection:**
+```python
+# TSP automatically detects mode based on input type
+tsp.verify_artifact(123)                    # int -> stateful lookup
+tsp.verify_artifact("abc123...")             # str -> stateful lookup  
+tsp.verify_artifact({"artifact_data": ...}) # dict -> stateless verification
+```
 
 ### Ownership Chains
 
@@ -307,11 +405,16 @@ TSP(private_key_path, public_key_path, key_password, model, mode="create", desig
 ```
 
 #### Methods
-- `create_artifact()` - Generate new artifact
-- `verify_artifact(identifier)` - Verify artifact integrity
-- `verify_my_ownership(identifier)` - Check ownership rights
-- `restore_artifact(identifier)` - Restore artifact state
-- `list_artifacts()` - List all stored artifacts
+- `create_artifact(persist=True)` - Generate new artifact (stateful/stateless)
+- `verify_artifact(identifier)` - Verify artifact integrity (auto-detection)
+- `verify_my_ownership(identifier)` - Check ownership rights (auto-detection)
+- `restore_artifact(identifier)` - Restore artifact state (stateful only)
+- `list_artifacts()` - List all stored artifacts (stateful only)
+
+#### New Parameters
+- `persist` (bool): 
+  - `True` = Stateful mode (commits.json storage)
+  - `False` = Stateless mode (embedded data only)
 
 ### TSPHelper Class
 
@@ -320,10 +423,9 @@ TSP(private_key_path, public_key_path, key_password, model, mode="create", desig
 - `get_user_hash(username)` - Get user's public key hash
 - `check_user_keys(username)` - Verify key files exist
 
-## Storage Format
+## Storage Formats
 
-Artifacts are stored in `commits.json` with complete verification data:
-
+### Stateful Storage (commits.json)
 ```json
 {
   "artifact_index": 0,
@@ -339,32 +441,35 @@ Artifacts are stored in `commits.json` with complete verification data:
 }
 ```
 
-## Use Cases
+### Stateless Storage (embedded in tokens)
+```json
+{
+  "artifact_data": {
+    "seed": "...",
+    "public_key": "...", 
+    "signature": "...",
+    "config_hash": "...",
+    "prime": "...",
+    "all_verification_data": "..."
+  }
+}
+```
 
-### Digital Authentication
-- Unforgeable login tokens
-- Multi-factor authentication artifacts
-- Session credentials with built-in expiration
+## Use Cases by Mode
 
-### Supply Chain Verification
-- Product authenticity certificates
-- Chain of custody tracking
-- Quality assurance proofs
+### Stateful Mode Use Cases
+- **Digital Certificates**: Academic diplomas, professional certifications
+- **Software Licensing**: Enterprise perpetual licenses
+- **Digital Collectibles**: NFTs, rare digital assets
+- **Legal Documents**: Contracts, deeds, official records
+- **Supply Chain**: Product authenticity with audit trail
 
-### Software Licensing
-- Tamper-proof license keys
-- Usage tracking artifacts
-- Subscription management
-
-### Digital Collectibles
-- Provably rare digital assets
-- Ownership transfer mechanisms
-- Authenticity guarantees
-
-### Certificate Management
-- Educational diplomas
-- Professional certifications
-- Government-issued documents
+### Stateless Mode Use Cases  
+- **Web Authentication**: Session tokens, login credentials
+- **API Access**: Service-to-service authentication
+- **Microservices**: Inter-service communication tokens
+- **Mobile Apps**: Offline-capable authentication
+- **Temporary Access**: Short-term permissions, trial access
 
 ## Security Features
 
@@ -388,23 +493,29 @@ Artifacts are stored in `commits.json` with complete verification data:
 ## Performance
 
 ### Creation Times (approximate)
-- WEB_AUTH: < 1 second
-- LICENSE: 5-30 seconds  
-- CERTIFICATE: 30-120 seconds
-- NFT: 2-10 minutes
+- **WEB_AUTH**: < 1 second (both modes)
+- **LICENSE**: 5-30 seconds (both modes)
+- **CERTIFICATE**: 30-120 seconds (primarily stateful)
+- **NFT**: 2-10 minutes (stateful only)
 
 ### Verification Times
-- Single artifact: < 100ms
-- Batch verification: Linear scaling
-- Merkle proof: Logarithmic complexity
+- **Stateful**: < 100ms (database lookup + crypto verification)
+- **Stateless**: < 50ms (pure crypto verification)
+- **Auto-detection**: No performance penalty
+
+### Storage Comparison
+- **Stateful**: ~500-800 bytes per artifact (commits.json)
+- **Stateless**: ~2-5KB per token (embedded data)
+- **Trade-off**: Storage size vs server-side persistence
 
 ## Contributing
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+1. Fork the repository at https://github.com/sonymag/TrueState-Protocol
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/TrueState-Protocol.git`
+3. Create feature branch: `git checkout -b feature/amazing-feature`
+4. Make your changes and commit: `git commit -m 'Add amazing feature'`
+5. Push to your fork: `git push origin feature/amazing-feature`
+6. Open a Pull Request from your fork to `sonymag/TrueState-Protocol:main`
 
 ### Development Setup
 
@@ -415,8 +526,13 @@ pip install -r requirements-dev.txt
 # Run tests
 python -m pytest
 
-# Generate test keys
-python examples/generate_keys.py
+# Test dual-mode examples
+python examples/2_ownership_chain.py
+python examples/1_software_licensing.py
+python examples/3_digital_certificates.py
+
+# Run stateless web server
+python examples/4_tsp_flask_auth.py
 ```
 
 ## License
@@ -453,13 +569,12 @@ For technical questions or implementation support:
 
 ## Roadmap
 
-- [ ] Multi-signature artifacts
+- [x] Dual-mode architecture (stateful/stateless)
+- [x] Auto-detection API
+- [x] Stateless web authentication
 - [ ] Time-locked activation
-- [ ] Cross-protocol bridges
-- [ ] Hardware security module integration
 - [ ] Mobile SDK development
-- [ ] Enterprise API gateway
 
 ---
 
-**TSP Protocol** - Creating mathematical uniqueness in the digital world.
+**TSP Protocol** - Creating mathematical uniqueness in the digital world with flexible deployment options.
